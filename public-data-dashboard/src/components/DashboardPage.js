@@ -22,7 +22,7 @@
       </div>
       <div class="dashboard-meta">
         <span class="status-dot" aria-hidden="true"></span>
-        <span>대시보드 초안</span>
+        <span>${escapeHtml(mainPrompt)} 분석 보드</span>
       </div>
     `;
 
@@ -92,10 +92,25 @@
 
     function createAdditionalPromptPanel() {
       const wrapper = document.createElement("div");
-      wrapper.className = "additional-prompt";
+      wrapper.className = "additional-prompt-chat";
+
+      const conversation = document.createElement("div");
+      conversation.className = "additional-chat-thread conversation-panel";
+      conversation.setAttribute("aria-live", "polite");
+
+      if (additionalPrompts.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "chat-empty-state";
+        empty.textContent = "추가로 궁금한 점을 입력하면 이곳에 대화형 요청 기록이 표시됩니다.";
+        conversation.appendChild(empty);
+      } else {
+        additionalPrompts.forEach((prompt) => {
+          conversation.append(...createAdditionalPromptExchange(prompt));
+        });
+      }
 
       const form = document.createElement("form");
-      form.className = "inline-composer";
+      form.className = "inline-composer chat-composer";
 
       const label = document.createElement("label");
       label.className = "sr-only";
@@ -106,7 +121,7 @@
       textarea.id = "additional-prompt";
       textarea.rows = 3;
       textarea.value = additionalPrompt;
-      textarea.placeholder = "추가로 확인하고 싶은 내용을 입력하세요";
+      textarea.placeholder = "예: 이 데이터에서 지역별 차이도 비교해줘";
 
       const button = document.createElement("button");
       button.className = "primary-button";
@@ -115,22 +130,6 @@
       button.disabled = additionalPrompt.trim().length === 0;
 
       form.append(label, textarea, button);
-
-      const list = document.createElement("ul");
-      list.className = "request-list";
-
-      if (additionalPrompts.length === 0) {
-        const empty = document.createElement("li");
-        empty.className = "empty-request";
-        empty.textContent = "입력한 추가 프롬포트가 이곳에 표시됩니다.";
-        list.appendChild(empty);
-      } else {
-        additionalPrompts.forEach((prompt) => {
-          const item = document.createElement("li");
-          item.textContent = `추가 요청: ${prompt}`;
-          list.appendChild(item);
-        });
-      }
 
       textarea.addEventListener("input", () => {
         onAdditionalPromptChange(textarea.value);
@@ -151,12 +150,29 @@
         onAdditionalPromptSubmit();
       });
 
-      wrapper.append(form, list);
+      wrapper.append(conversation, form);
 
       return window.PublicDataDashboard.Panel({
-        title: "추가 프롬포트",
+        title: "추가 프롬포트 대화",
         children: wrapper,
+        className: "conversation-panel-shell",
       });
+    }
+
+    function createAdditionalPromptExchange(prompt) {
+      const userBubble = document.createElement("div");
+      userBubble.className = "chat-bubble user-bubble additional-user-bubble";
+      userBubble.textContent = prompt;
+
+      const botBubble = document.createElement("div");
+      botBubble.className = "chat-bubble bot-bubble additional-bot-bubble";
+      botBubble.textContent = createAdditionalPromptReply(prompt);
+
+      return [userBubble, botBubble];
+    }
+
+    function createAdditionalPromptReply(prompt) {
+      return `추가 요청 "${prompt}"을(를) 세션에 저장했습니다. 실제 데이터 재분석 응답은 추후 백엔드 API 연결 후 제공됩니다.`;
     }
 
     function createVisualizationPanel() {
@@ -182,7 +198,7 @@
       chart.append(chartBars, chartCopy);
 
       return window.PublicDataDashboard.Panel({
-        title: "시각화 영역",
+        title: `시각화 보드: ${mainPrompt}`,
         children: chart,
         className: "visual-panel",
       });
@@ -215,6 +231,15 @@
     }
 
     return page;
+  }
+
+  function escapeHtml(value) {
+    return String(value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
   }
 
   window.PublicDataDashboard.DashboardPage = DashboardPage;
