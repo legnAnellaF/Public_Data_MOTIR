@@ -1,7 +1,15 @@
 (function () {
   window.PublicDataDashboard = window.PublicDataDashboard || {};
 
-  function LoginPage({ onLogin }) {
+  function LoginPage({
+    mode = "login",
+    authNotice = "",
+    onLogin,
+    onSignup,
+    onShowSignup,
+    onShowLogin,
+  }) {
+    const isSignup = mode === "signup";
     const page = document.createElement("main");
     page.className = "center-page login-page";
 
@@ -14,7 +22,7 @@
       <div class="brand-mark" aria-hidden="true">D</div>
       <div>
         <p class="eyebrow">Public Data Lab</p>
-        <h1>공공데이터 시각화</h1>
+        <h1>${isSignup ? "회원가입" : "공공데이터 시각화"}</h1>
       </div>
     `;
 
@@ -43,30 +51,58 @@
     passwordInput.placeholder = "비밀번호를 입력하세요";
 
     const error = document.createElement("p");
-    error.className = "form-error";
+    error.className = authNotice ? "form-error success" : "form-error";
     error.setAttribute("role", "alert");
+    error.textContent = authNotice;
 
     const button = document.createElement("button");
     button.className = "primary-button";
     button.type = "submit";
-    button.textContent = "로그인";
+    button.textContent = isSignup ? "가입하기" : "로그인";
 
-    form.append(userLabel, userInput, passwordLabel, passwordInput, error, button);
+    const switchButton = document.createElement("button");
+    switchButton.className = "text-button";
+    switchButton.type = "button";
+    switchButton.textContent = isSignup
+      ? "이미 계정이 있으신가요? 로그인"
+      : "회원가입";
+    switchButton.addEventListener("click", () => {
+      error.textContent = "";
+
+      if (isSignup) {
+        onShowLogin();
+      } else {
+        onShowSignup();
+      }
+    });
+
+    form.append(
+      userLabel,
+      userInput,
+      passwordLabel,
+      passwordInput,
+      error,
+      button,
+      switchButton
+    );
 
     form.addEventListener("submit", (event) => {
       event.preventDefault();
+      error.className = "form-error";
 
       const userId = userInput.value.trim();
       const password = passwordInput.value.trim();
 
-      // 현재는 임시 로그인이며 추후 백엔드 인증 API로 대체 가능.
-      if (userId && password) {
-        error.textContent = "";
-        onLogin();
+      if (!userId || !password) {
+        error.textContent = "아이디와 비밀번호를 모두 입력해 주세요.";
         return;
       }
 
-      error.textContent = "아이디와 비밀번호를 모두 입력해 주세요.";
+      const result = isSignup
+        ? onSignup(userId, password)
+        : onLogin(userId, password);
+
+      error.textContent = result.ok ? result.message || "" : result.message;
     });
 
     shell.append(brand, form);

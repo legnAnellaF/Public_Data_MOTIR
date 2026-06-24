@@ -75,7 +75,7 @@
       sidebar.className = "prompt-sidebar";
 
       const heading = document.createElement("h2");
-      heading.textContent = "이전 프롬포트";
+      heading.textContent = "채팅 기록";
 
       const list = document.createElement("ul");
       list.className = "prompt-history-list";

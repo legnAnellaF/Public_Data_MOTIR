@@ -32,7 +32,7 @@
     const newPromptButton = document.createElement("button");
     newPromptButton.className = "ghost-button";
     newPromptButton.type = "button";
-    newPromptButton.textContent = "새 프롬포트";
+    newPromptButton.textContent = "새 채팅";
     newPromptButton.addEventListener("click", onNewPrompt);
 
     const logoutButton = document.createElement("button");
@@ -92,7 +92,20 @@
 
     function createAdditionalPromptPanel() {
       const wrapper = document.createElement("div");
-      wrapper.className = "additional-prompt";
+      wrapper.className = "additional-prompt additional-prompt-chat";
+
+      const thread = document.createElement("div");
+      thread.className = "additional-chat-thread";
+
+      appendChatExchange(
+        thread,
+        mainPrompt,
+        "최초 프롬포트를 기준으로 분석 목차, 시각화 영역, 데이터 코멘트 초안을 구성했습니다."
+      );
+
+      additionalPrompts.forEach((prompt) => {
+        appendChatExchange(thread, prompt, createAdditionalPromptReply(prompt));
+      });
 
       const form = document.createElement("form");
       form.className = "inline-composer";
@@ -116,22 +129,6 @@
 
       form.append(label, textarea, button);
 
-      const list = document.createElement("ul");
-      list.className = "request-list";
-
-      if (additionalPrompts.length === 0) {
-        const empty = document.createElement("li");
-        empty.className = "empty-request";
-        empty.textContent = "입력한 추가 프롬포트가 이곳에 표시됩니다.";
-        list.appendChild(empty);
-      } else {
-        additionalPrompts.forEach((prompt) => {
-          const item = document.createElement("li");
-          item.textContent = `추가 요청: ${prompt}`;
-          list.appendChild(item);
-        });
-      }
-
       textarea.addEventListener("input", () => {
         onAdditionalPromptChange(textarea.value);
         button.disabled = textarea.value.trim().length === 0;
@@ -151,12 +148,29 @@
         onAdditionalPromptSubmit();
       });
 
-      wrapper.append(form, list);
+      wrapper.append(thread, form);
 
       return window.PublicDataDashboard.Panel({
         title: "추가 프롬포트",
         children: wrapper,
+        className: "conversation-panel",
       });
+    }
+
+    function appendChatExchange(thread, userText, botText) {
+      const userBubble = document.createElement("div");
+      userBubble.className = "chat-bubble user-bubble";
+      userBubble.textContent = userText;
+
+      const botBubble = document.createElement("div");
+      botBubble.className = "chat-bubble bot-bubble";
+      botBubble.textContent = botText;
+
+      thread.append(userBubble, botBubble);
+    }
+
+    function createAdditionalPromptReply(prompt) {
+      return `추가 요청 "${prompt}" 내용을 반영할 수 있도록 시각화와 데이터 코멘트 업데이트가 이 영역에 이어서 표시됩니다.`;
     }
 
     function createVisualizationPanel() {
@@ -182,10 +196,21 @@
       chart.append(chartBars, chartCopy);
 
       return window.PublicDataDashboard.Panel({
-        title: "시각화 영역",
+        title: createVisualizationTitle(mainPrompt, additionalPrompts),
         children: chart,
         className: "visual-panel",
       });
+    }
+
+    function createVisualizationTitle(prompt, prompts) {
+      const latestPrompt = prompts.length > 0 ? prompts[prompts.length - 1] : prompt;
+      const compactPrompt = latestPrompt.replace(/\s+/g, " ").trim();
+      const description =
+        compactPrompt.length > 28
+          ? `${compactPrompt.slice(0, 28)}...`
+          : compactPrompt;
+
+      return description ? `시각화 보드 - ${description}` : "시각화 보드";
     }
 
     function createCommentPanel(prompt) {
