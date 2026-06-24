@@ -22,7 +22,7 @@
       </div>
       <div class="dashboard-meta">
         <span class="status-dot" aria-hidden="true"></span>
-        <span>${escapeHtml(mainPrompt)} 분석 보드</span>
+        <span>${escapeHtml(createVisualizationTitle(mainPrompt, additionalPrompts))}</span>
       </div>
     `;
 
@@ -32,7 +32,7 @@
     const newPromptButton = document.createElement("button");
     newPromptButton.className = "ghost-button";
     newPromptButton.type = "button";
-    newPromptButton.textContent = "새 프롬포트";
+    newPromptButton.textContent = "새 채팅";
     newPromptButton.addEventListener("click", onNewPrompt);
 
     const logoutButton = document.createElement("button");
@@ -98,16 +98,16 @@
       conversation.className = "additional-chat-thread conversation-panel";
       conversation.setAttribute("aria-live", "polite");
 
-      if (additionalPrompts.length === 0) {
-        const empty = document.createElement("div");
-        empty.className = "chat-empty-state";
-        empty.textContent = "추가로 궁금한 점을 입력하면 이곳에 대화형 요청 기록이 표시됩니다.";
-        conversation.appendChild(empty);
-      } else {
-        additionalPrompts.forEach((prompt) => {
-          conversation.append(...createAdditionalPromptExchange(prompt));
-        });
-      }
+      conversation.append(
+        ...createAdditionalPromptExchange(
+          mainPrompt,
+          "최초 프롬포트를 기준으로 분석 목차, 시각화 영역, 데이터 코멘트 초안을 구성했습니다."
+        )
+      );
+
+      additionalPrompts.forEach((prompt) => {
+        conversation.append(...createAdditionalPromptExchange(prompt));
+      });
 
       const form = document.createElement("form");
       form.className = "inline-composer chat-composer";
@@ -159,14 +159,14 @@
       });
     }
 
-    function createAdditionalPromptExchange(prompt) {
+    function createAdditionalPromptExchange(prompt, replyText = createAdditionalPromptReply(prompt)) {
       const userBubble = document.createElement("div");
       userBubble.className = "chat-bubble user-bubble additional-user-bubble";
       userBubble.textContent = prompt;
 
       const botBubble = document.createElement("div");
       botBubble.className = "chat-bubble bot-bubble additional-bot-bubble";
-      botBubble.textContent = createAdditionalPromptReply(prompt);
+      botBubble.textContent = replyText;
 
       return [userBubble, botBubble];
     }
@@ -198,10 +198,19 @@
       chart.append(chartBars, chartCopy);
 
       return window.PublicDataDashboard.Panel({
-        title: `시각화 보드: ${mainPrompt}`,
+        title: createVisualizationTitle(mainPrompt, additionalPrompts),
         children: chart,
         className: "visual-panel",
       });
+    }
+
+    function createVisualizationTitle(prompt, prompts) {
+      const latestPrompt = prompts.length > 0 ? prompts[prompts.length - 1] : prompt;
+      const compactPrompt = latestPrompt.replace(/\s+/g, " ").trim();
+      const description =
+        compactPrompt.length > 28 ? `${compactPrompt.slice(0, 28)}...` : compactPrompt;
+
+      return description ? `시각화 보드 - ${description}` : "시각화 보드";
     }
 
     function createCommentPanel(prompt) {

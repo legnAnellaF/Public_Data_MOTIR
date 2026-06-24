@@ -6,7 +6,7 @@
   const promptSessionsStorageKey = "publicDataDashboardPromptSessions";
 
   function getUserStorageKey(baseKey, userId) {
-    return `${baseKey}:${userId}`;
+    return `${baseKey}:${encodeURIComponent(userId)}`;
   }
 
   function readJsonStorage(key, fallbackValue) {
@@ -90,9 +90,16 @@
       {}
     );
 
-    return sessions && typeof sessions === "object" && !Array.isArray(sessions)
-      ? sessions
-      : {};
+    if (!sessions || typeof sessions !== "object" || Array.isArray(sessions)) {
+      return {};
+    }
+
+    return Object.fromEntries(
+      Object.entries(sessions).filter(
+        ([prompt, session]) =>
+          prompt && session && Array.isArray(session.additionalPrompts)
+      )
+    );
   }
 
   function writeStoredPromptSessions(sessions, userId) {
@@ -119,6 +126,27 @@
     const nextHistory = [
       createPromptHistoryItem(trimmedPrompt),
       ...historyWithoutDuplicate,
+    ].slice(0, 20);
+
+    writeStoredPromptHistory(nextHistory, userId);
+    return nextHistory;
+  }
+
+  function movePromptHistoryToTop(prompt, userId) {
+    const trimmedPrompt = prompt.trim();
+    const existingItem = state.promptHistory.find(
+      (item) => item.text === trimmedPrompt
+    );
+    const historyWithoutPrompt = state.promptHistory.filter(
+      (item) => item.text !== trimmedPrompt
+    );
+    const nextHistory = [
+      {
+        ...(existingItem || createPromptHistoryItem(trimmedPrompt)),
+        text: trimmedPrompt,
+        updatedAt: new Date().toISOString(),
+      },
+      ...historyWithoutPrompt,
     ].slice(0, 20);
 
     writeStoredPromptHistory(nextHistory, userId);
@@ -319,11 +347,13 @@
     }
 
     const nextAdditionalPrompts = [...state.additionalPrompts, prompt];
+    const nextHistory = movePromptHistoryToTop(state.mainPrompt, state.currentUser);
     const nextSessions = writePromptSession(state.mainPrompt, nextAdditionalPrompts);
 
     setState({
       additionalPrompt: "",
       additionalPrompts: nextAdditionalPrompts,
+      promptHistory: nextHistory,
       promptSessions: nextSessions,
     });
   }
