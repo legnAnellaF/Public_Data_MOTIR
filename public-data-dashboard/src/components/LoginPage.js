@@ -4,6 +4,7 @@
   function LoginPage({
     mode = "login",
     errorMessage = "",
+    authNotice = "",
     onLogin,
     onSignup,
     onShowLogin,
@@ -74,9 +75,9 @@
       : "가입한 데모 계정으로 로그인하면 사용자별 프롬포트 기록을 불러옵니다.";
 
     const error = document.createElement("p");
-    error.className = "form-error";
+    error.className = authNotice ? "form-error success" : "form-error";
     error.setAttribute("role", "alert");
-    error.textContent = errorMessage;
+    error.textContent = authNotice || errorMessage;
 
     const button = document.createElement("button");
     button.className = "primary-button";
@@ -114,6 +115,7 @@
         return;
       }
 
+      error.className = "form-error";
       error.textContent = "";
 
       if (isSignupMode) {
