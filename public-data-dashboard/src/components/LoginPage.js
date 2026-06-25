@@ -3,13 +3,14 @@
 
   function LoginPage({
     mode = "login",
+    errorMessage = "",
     authNotice = "",
     onLogin,
     onSignup,
-    onShowSignup,
     onShowLogin,
+    onShowSignup,
   }) {
-    const isSignup = mode === "signup";
+    const isSignupMode = mode === "signup";
     const page = document.createElement("main");
     page.className = "center-page login-page";
 
@@ -25,6 +26,23 @@
         <h1>${isSignup ? "회원가입" : "공공데이터 시각화"}</h1>
       </div>
     `;
+
+    const modeSwitch = document.createElement("div");
+    modeSwitch.className = "auth-mode-switch";
+
+    const loginModeButton = document.createElement("button");
+    loginModeButton.type = "button";
+    loginModeButton.className = `auth-mode-button ${!isSignupMode ? "active" : ""}`.trim();
+    loginModeButton.textContent = "로그인";
+    loginModeButton.addEventListener("click", onShowLogin);
+
+    const signupModeButton = document.createElement("button");
+    signupModeButton.type = "button";
+    signupModeButton.className = `auth-mode-button ${isSignupMode ? "active" : ""}`.trim();
+    signupModeButton.textContent = "회원가입";
+    signupModeButton.addEventListener("click", onShowSignup);
+
+    modeSwitch.append(loginModeButton, signupModeButton);
 
     const form = document.createElement("form");
     form.className = "form-stack";
@@ -47,43 +65,33 @@
     const passwordInput = document.createElement("input");
     passwordInput.id = "login-password";
     passwordInput.type = "password";
-    passwordInput.autocomplete = "current-password";
+    passwordInput.autocomplete = isSignupMode ? "new-password" : "current-password";
     passwordInput.placeholder = "비밀번호를 입력하세요";
+
+    const helper = document.createElement("p");
+    helper.className = "auth-helper";
+    helper.textContent = isSignupMode
+      ? "데모용 계정은 이 브라우저의 localStorage에만 저장됩니다."
+      : "가입한 데모 계정으로 로그인하면 사용자별 프롬포트 기록을 불러옵니다.";
 
     const error = document.createElement("p");
     error.className = authNotice ? "form-error success" : "form-error";
     error.setAttribute("role", "alert");
-    error.textContent = authNotice;
+    error.textContent = authNotice || errorMessage;
 
     const button = document.createElement("button");
     button.className = "primary-button";
     button.type = "submit";
-    button.textContent = isSignup ? "가입하기" : "로그인";
-
-    const switchButton = document.createElement("button");
-    switchButton.className = "text-button";
-    switchButton.type = "button";
-    switchButton.textContent = isSignup
-      ? "이미 계정이 있으신가요? 로그인"
-      : "회원가입";
-    switchButton.addEventListener("click", () => {
-      error.textContent = "";
-
-      if (isSignup) {
-        onShowLogin();
-      } else {
-        onShowSignup();
-      }
-    });
+    button.textContent = isSignupMode ? "가입하기" : "로그인";
 
     form.append(
       userLabel,
       userInput,
       passwordLabel,
       passwordInput,
+      helper,
       error,
-      button,
-      switchButton
+      button
     );
 
     form.addEventListener("submit", (event) => {
@@ -98,14 +106,28 @@
         return;
       }
 
-      const result = isSignup
-        ? onSignup(userId, password)
-        : onLogin(userId, password);
+      if (userId.length < 3) {
+        error.textContent = "아이디는 3자 이상 입력해 주세요.";
+        return;
+      }
 
-      error.textContent = result.ok ? result.message || "" : result.message;
+      if (password.length < 4) {
+        error.textContent = "비밀번호는 4자 이상 입력해 주세요.";
+        return;
+      }
+
+      error.className = "form-error";
+      error.textContent = "";
+
+      if (isSignupMode) {
+        onSignup(userId, password);
+        return;
+      }
+
+      onLogin(userId, password);
     });
 
-    shell.append(brand, form);
+    shell.append(brand, modeSwitch, form);
     page.appendChild(shell);
 
     return page;

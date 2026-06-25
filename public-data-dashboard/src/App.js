@@ -1,13 +1,29 @@
 (function () {
   const appRoot = document.getElementById("app");
-  const storageKey = "publicDataDashboardLoggedIn";
-  const currentUserStorageKey = "publicDataDashboardCurrentUser";
   const usersStorageKey = "publicDataDashboardUsers";
+  const currentUserStorageKey = "publicDataDashboardCurrentUser";
   const promptHistoryStorageKey = "publicDataDashboardPromptHistory";
   const promptSessionsStorageKey = "publicDataDashboardPromptSessions";
 
   function getUserStorageKey(baseKey, userId) {
     return `${baseKey}:${encodeURIComponent(userId)}`;
+  }
+
+  function readJsonStorage(key, fallbackValue) {
+    try {
+      const storedValue = localStorage.getItem(key);
+      return storedValue ? JSON.parse(storedValue) : fallbackValue;
+    } catch (error) {
+      return fallbackValue;
+    }
+  }
+
+  function writeJsonStorage(key, value) {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+    } catch (error) {
+      // 저장소 접근이 제한된 환경에서는 현재 세션 상태만 유지한다.
+    }
   }
 
   function readStoredCurrentUser() {
@@ -18,24 +34,11 @@
     }
   }
 
-  function readStoredLogin() {
+  function writeStoredCurrentUser(userId) {
     try {
-      return (
-        localStorage.getItem(storageKey) === "true" &&
-        Boolean(localStorage.getItem(currentUserStorageKey))
-      );
-    } catch (error) {
-      return false;
-    }
-  }
-
-  function writeStoredLogin(value, userId = "") {
-    try {
-      if (value) {
-        localStorage.setItem(storageKey, "true");
+      if (userId) {
         localStorage.setItem(currentUserStorageKey, userId);
       } else {
-        localStorage.removeItem(storageKey);
         localStorage.removeItem(currentUserStorageKey);
       }
     } catch (error) {
@@ -44,89 +47,67 @@
   }
 
   function readStoredUsers() {
-    try {
-      const storedValue = localStorage.getItem(usersStorageKey);
-      const parsedValue = storedValue ? JSON.parse(storedValue) : [];
-
-      if (!Array.isArray(parsedValue)) {
-        return [];
-      }
-
-      return parsedValue.filter((user) => user && user.userId && user.password);
-    } catch (error) {
-      return [];
-    }
+    const users = readJsonStorage(usersStorageKey, {});
+    return users && typeof users === "object" && !Array.isArray(users) ? users : {};
   }
 
   function writeStoredUsers(users) {
-    try {
-      localStorage.setItem(usersStorageKey, JSON.stringify(users));
-    } catch (error) {
-      // 저장소 접근이 제한된 환경에서는 현재 세션 상태만 유지한다.
-    }
+    writeJsonStorage(usersStorageKey, users);
   }
 
   function readStoredPromptHistory(userId) {
-    try {
-      const storedValue = localStorage.getItem(
-        getUserStorageKey(promptHistoryStorageKey, userId)
-      );
-      const parsedValue = storedValue ? JSON.parse(storedValue) : [];
-
-      if (!Array.isArray(parsedValue)) {
-        return [];
-      }
-
-      return parsedValue.filter((item) => item && item.id && item.text);
-    } catch (error) {
+    if (!userId) {
       return [];
     }
+
+    const storedHistory = readJsonStorage(
+      getUserStorageKey(promptHistoryStorageKey, userId),
+      []
+    );
+
+    if (!Array.isArray(storedHistory)) {
+      return [];
+    }
+
+    return storedHistory.filter((item) => item && item.id && item.text);
   }
 
   function writeStoredPromptHistory(history, userId) {
-    try {
-      localStorage.setItem(
-        getUserStorageKey(promptHistoryStorageKey, userId),
-        JSON.stringify(history)
-      );
-    } catch (error) {
-      // 저장소 접근이 제한된 환경에서는 현재 세션 상태만 유지한다.
+    if (!userId) {
+      return;
     }
+
+    writeJsonStorage(getUserStorageKey(promptHistoryStorageKey, userId), history);
   }
 
   function readStoredPromptSessions(userId) {
-    try {
-      const storedValue = localStorage.getItem(
-        getUserStorageKey(promptSessionsStorageKey, userId)
-      );
-      const parsedValue = storedValue ? JSON.parse(storedValue) : {};
-
-      if (!parsedValue || typeof parsedValue !== "object" || Array.isArray(parsedValue)) {
-        return {};
-      }
-
-      return Object.fromEntries(
-        Object.entries(parsedValue).filter(
-          ([prompt, session]) =>
-            prompt &&
-            session &&
-            Array.isArray(session.additionalPrompts)
-        )
-      );
-    } catch (error) {
+    if (!userId) {
       return {};
     }
+
+    const sessions = readJsonStorage(
+      getUserStorageKey(promptSessionsStorageKey, userId),
+      {}
+    );
+
+    if (!sessions || typeof sessions !== "object" || Array.isArray(sessions)) {
+      return {};
+    }
+
+    return Object.fromEntries(
+      Object.entries(sessions).filter(
+        ([prompt, session]) =>
+          prompt && session && Array.isArray(session.additionalPrompts)
+      )
+    );
   }
 
   function writeStoredPromptSessions(sessions, userId) {
-    try {
-      localStorage.setItem(
-        getUserStorageKey(promptSessionsStorageKey, userId),
-        JSON.stringify(sessions)
-      );
-    } catch (error) {
-      // 저장소 접근이 제한된 환경에서는 현재 세션 상태만 유지한다.
+    if (!userId) {
+      return;
     }
+
+    writeJsonStorage(getUserStorageKey(promptSessionsStorageKey, userId), sessions);
   }
 
   function createPromptHistoryItem(prompt) {
@@ -137,7 +118,7 @@
     };
   }
 
-  function rememberPrompt(prompt) {
+  function rememberPrompt(prompt, userId) {
     const trimmedPrompt = prompt.trim();
     const historyWithoutDuplicate = state.promptHistory.filter(
       (item) => item.text !== trimmedPrompt
@@ -147,11 +128,11 @@
       ...historyWithoutDuplicate,
     ].slice(0, 20);
 
-    writeStoredPromptHistory(nextHistory, state.currentUserId);
+    writeStoredPromptHistory(nextHistory, userId);
     return nextHistory;
   }
 
-  function movePromptHistoryToTop(prompt) {
+  function movePromptHistoryToTop(prompt, userId) {
     const trimmedPrompt = prompt.trim();
     const existingItem = state.promptHistory.find(
       (item) => item.text === trimmedPrompt
@@ -168,32 +149,58 @@
       ...historyWithoutPrompt,
     ].slice(0, 20);
 
-    writeStoredPromptHistory(nextHistory, state.currentUserId);
+    writeStoredPromptHistory(nextHistory, userId);
     return nextHistory;
   }
 
-  const storedLogin = readStoredLogin();
-  const storedUserId = storedLogin ? readStoredCurrentUser() : "";
-  const storedPromptHistory = storedUserId
-    ? readStoredPromptHistory(storedUserId)
-    : [];
-  const storedPromptSessions = storedUserId
-    ? readStoredPromptSessions(storedUserId)
-    : {};
+  function readPromptSession(prompt) {
+    return state.promptSessions[prompt] || { additionalPrompts: [] };
+  }
+
+  function writePromptSession(prompt, additionalPrompts) {
+    if (!state.currentUser || !prompt) {
+      return state.promptSessions;
+    }
+
+    const nextSessions = {
+      ...state.promptSessions,
+      [prompt]: {
+        additionalPrompts,
+        updatedAt: new Date().toISOString(),
+      },
+    };
+
+    writeStoredPromptSessions(nextSessions, state.currentUser);
+    return nextSessions;
+  }
+
   const storedUsers = readStoredUsers();
+  const storedCurrentUser = readStoredCurrentUser();
+  const hasStoredUser = Boolean(storedCurrentUser && storedUsers[storedCurrentUser]);
+  const storedPromptHistory = hasStoredUser
+    ? readStoredPromptHistory(storedCurrentUser)
+    : [];
+  const storedPromptSessions = hasStoredUser
+    ? readStoredPromptSessions(storedCurrentUser)
+    : {};
 
   const state = {
-    isLoggedIn: storedLogin,
-    currentView: storedLogin ? "prompt" : "login",
-    currentUserId: storedUserId,
-    authNotice: "",
+    users: storedUsers,
+    currentUser: hasStoredUser ? storedCurrentUser : "",
+    isLoggedIn: hasStoredUser,
+    currentView: hasStoredUser ? "prompt" : "login",
+    authMode: "login",
+    authError: "",
     mainPrompt: "",
     additionalPrompt: "",
     additionalPrompts: [],
     promptHistory: storedPromptHistory,
     promptSessions: storedPromptSessions,
-    users: storedUsers,
   };
+
+  if (storedCurrentUser && !hasStoredUser) {
+    writeStoredCurrentUser("");
+  }
 
   function setState(nextState) {
     Object.assign(state, nextState);
@@ -201,50 +208,31 @@
   }
 
   function handleLogin(userId, password) {
-    const matchedUser = state.users.find(
-      (user) => user.userId === userId && user.password === password
-    );
+    const trimmedUserId = userId.trim();
+    const storedUser = state.users[trimmedUserId];
 
-    if (!matchedUser) {
-      return {
-        ok: false,
-        message: "회원가입한 아이디와 비밀번호를 입력해 주세요.",
-      };
+    if (!storedUser || storedUser.password !== password) {
+      setState({
+        authError: "아이디 또는 비밀번호가 올바르지 않습니다.",
+      });
+      return;
     }
 
-    writeStoredLogin(true, userId);
+    writeStoredCurrentUser(trimmedUserId);
+
     setState({
+      currentUser: trimmedUserId,
       isLoggedIn: true,
       currentUserId: userId,
       authNotice: "",
       currentView: "prompt",
+      authMode: "login",
+      authError: "",
       mainPrompt: "",
       additionalPrompt: "",
       additionalPrompts: [],
-      promptHistory: readStoredPromptHistory(userId),
-      promptSessions: readStoredPromptSessions(userId),
-    });
-
-    return { ok: true };
-  }
-
-  function handleSignup(userId, password) {
-    const duplicatedUser = state.users.some((user) => user.userId === userId);
-
-    if (duplicatedUser) {
-      return {
-        ok: false,
-        message: "이미 가입된 아이디입니다.",
-      };
-    }
-
-    const nextUsers = [...state.users, { userId, password }];
-
-    writeStoredUsers(nextUsers);
-    setState({
-      users: nextUsers,
-      currentView: "login",
-      authNotice: "회원가입이 완료되었습니다. 가입한 계정으로 로그인해 주세요.",
+      promptHistory: readStoredPromptHistory(trimmedUserId),
+      promptSessions: readStoredPromptSessions(trimmedUserId),
     });
 
     return {
@@ -253,13 +241,52 @@
     };
   }
 
-  function handleLogout() {
-    writeStoredLogin(false);
+  function handleSignup(userId, password) {
+    const trimmedUserId = userId.trim();
+
+    if (state.users[trimmedUserId]) {
+      setState({ authError: "이미 가입된 아이디입니다." });
+      return;
+    }
+
+    const nextUsers = {
+      ...state.users,
+      [trimmedUserId]: {
+        password,
+        createdAt: new Date().toISOString(),
+      },
+    };
+
+    writeStoredUsers(nextUsers);
+    writeStoredCurrentUser(trimmedUserId);
+
     setState({
+      users: nextUsers,
+      currentUser: trimmedUserId,
+      isLoggedIn: true,
+      currentView: "prompt",
+      authMode: "login",
+      authError: "",
+      mainPrompt: "",
+      additionalPrompt: "",
+      additionalPrompts: [],
+      promptHistory: [],
+      promptSessions: {},
+    });
+  }
+
+  function handleAuthModeChange(authMode) {
+    setState({ authMode, authError: "" });
+  }
+
+  function handleLogout() {
+    writeStoredCurrentUser("");
+    setState({
+      currentUser: "",
       isLoggedIn: false,
       currentView: "login",
-      currentUserId: "",
-      authNotice: "",
+      authMode: "login",
+      authError: "",
       mainPrompt: "",
       additionalPrompt: "",
       additionalPrompts: [],
@@ -270,43 +297,48 @@
 
   function handleMainPromptSubmit(prompt) {
     const trimmedPrompt = prompt.trim();
-    const nextHistory = rememberPrompt(prompt);
-    const savedSession = state.promptSessions[trimmedPrompt];
+    const nextHistory = rememberPrompt(trimmedPrompt, state.currentUser);
+    const session = state.promptSessions[trimmedPrompt] || { additionalPrompts: [] };
+    const nextSessions = state.promptSessions[trimmedPrompt]
+      ? state.promptSessions
+      : writePromptSession(trimmedPrompt, []);
 
     setState({
       mainPrompt: trimmedPrompt,
       currentView: "dashboard",
       additionalPrompt: "",
-      additionalPrompts: savedSession ? savedSession.additionalPrompts : [],
+      additionalPrompts: session.additionalPrompts || [],
       promptHistory: nextHistory,
+      promptSessions: nextSessions,
     });
   }
 
   function handlePromptHistorySelect(prompt) {
-    const savedSession = state.promptSessions[prompt];
+    const session = readPromptSession(prompt);
 
     setState({
       mainPrompt: prompt,
       currentView: "dashboard",
       additionalPrompt: "",
-      additionalPrompts: savedSession ? savedSession.additionalPrompts : [],
+      additionalPrompts: session.additionalPrompts || [],
     });
   }
 
   function handlePromptHistoryRemove(promptId) {
     const removedPrompt = state.promptHistory.find((item) => item.id === promptId);
     const nextHistory = state.promptHistory.filter((item) => item.id !== promptId);
-    const nextPromptSessions = { ...state.promptSessions };
+    const nextSessions = { ...state.promptSessions };
 
     if (removedPrompt) {
-      delete nextPromptSessions[removedPrompt.text];
+      delete nextSessions[removedPrompt.text];
     }
 
-    writeStoredPromptHistory(nextHistory, state.currentUserId);
-    writeStoredPromptSessions(nextPromptSessions, state.currentUserId);
+    writeStoredPromptHistory(nextHistory, state.currentUser);
+    writeStoredPromptSessions(nextSessions, state.currentUser);
+
     setState({
       promptHistory: nextHistory,
-      promptSessions: nextPromptSessions,
+      promptSessions: nextSessions,
     });
   }
 
@@ -317,26 +349,19 @@
   function handleAdditionalPromptSubmit() {
     const prompt = state.additionalPrompt.trim();
 
-    if (!prompt) {
+    if (!prompt || !state.mainPrompt) {
       return;
     }
 
     const nextAdditionalPrompts = [...state.additionalPrompts, prompt];
-    const nextHistory = movePromptHistoryToTop(state.mainPrompt);
-    const nextPromptSessions = {
-      ...state.promptSessions,
-      [state.mainPrompt]: {
-        additionalPrompts: nextAdditionalPrompts,
-        updatedAt: new Date().toISOString(),
-      },
-    };
+    const nextHistory = movePromptHistoryToTop(state.mainPrompt, state.currentUser);
+    const nextSessions = writePromptSession(state.mainPrompt, nextAdditionalPrompts);
 
-    writeStoredPromptSessions(nextPromptSessions, state.currentUserId);
     setState({
       additionalPrompt: "",
       additionalPrompts: nextAdditionalPrompts,
       promptHistory: nextHistory,
-      promptSessions: nextPromptSessions,
+      promptSessions: nextSessions,
     });
   }
 
@@ -346,12 +371,12 @@
     if (!state.isLoggedIn || state.currentView === "login") {
       appRoot.appendChild(
         window.PublicDataDashboard.LoginPage({
-          mode: state.currentView === "signup" ? "signup" : "login",
-          authNotice: state.authNotice,
+          mode: state.authMode,
+          errorMessage: state.authError,
           onLogin: handleLogin,
           onSignup: handleSignup,
-          onShowSignup: () => setState({ currentView: "signup", authNotice: "" }),
-          onShowLogin: () => setState({ currentView: "login", authNotice: "" }),
+          onShowLogin: () => handleAuthModeChange("login"),
+          onShowSignup: () => handleAuthModeChange("signup"),
         })
       );
       return;

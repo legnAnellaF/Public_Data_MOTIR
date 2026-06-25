@@ -22,7 +22,7 @@
       </div>
       <div class="dashboard-meta">
         <span class="status-dot" aria-hidden="true"></span>
-        <span>대시보드 초안</span>
+        <span>${escapeHtml(createVisualizationTitle(mainPrompt, additionalPrompts))}</span>
       </div>
     `;
 
@@ -92,23 +92,25 @@
 
     function createAdditionalPromptPanel() {
       const wrapper = document.createElement("div");
-      wrapper.className = "additional-prompt additional-prompt-chat";
+      wrapper.className = "additional-prompt-chat";
 
-      const thread = document.createElement("div");
-      thread.className = "additional-chat-thread";
+      const conversation = document.createElement("div");
+      conversation.className = "additional-chat-thread conversation-panel";
+      conversation.setAttribute("aria-live", "polite");
 
-      appendChatExchange(
-        thread,
-        mainPrompt,
-        "최초 프롬포트를 기준으로 분석 목차, 시각화 영역, 데이터 코멘트 초안을 구성했습니다."
+      conversation.append(
+        ...createAdditionalPromptExchange(
+          mainPrompt,
+          "최초 프롬포트를 기준으로 분석 목차, 시각화 영역, 데이터 코멘트 초안을 구성했습니다."
+        )
       );
 
       additionalPrompts.forEach((prompt) => {
-        appendChatExchange(thread, prompt, createAdditionalPromptReply(prompt));
+        conversation.append(...createAdditionalPromptExchange(prompt));
       });
 
       const form = document.createElement("form");
-      form.className = "inline-composer";
+      form.className = "inline-composer chat-composer";
 
       const label = document.createElement("label");
       label.className = "sr-only";
@@ -119,7 +121,7 @@
       textarea.id = "additional-prompt";
       textarea.rows = 3;
       textarea.value = additionalPrompt;
-      textarea.placeholder = "추가로 확인하고 싶은 내용을 입력하세요";
+      textarea.placeholder = "예: 이 데이터에서 지역별 차이도 비교해줘";
 
       const button = document.createElement("button");
       button.className = "primary-button";
@@ -148,29 +150,29 @@
         onAdditionalPromptSubmit();
       });
 
-      wrapper.append(thread, form);
+      wrapper.append(conversation, form);
 
       return window.PublicDataDashboard.Panel({
-        title: "추가 프롬포트",
+        title: "추가 프롬포트 대화",
         children: wrapper,
-        className: "conversation-panel",
+        className: "conversation-panel-shell",
       });
     }
 
-    function appendChatExchange(thread, userText, botText) {
+    function createAdditionalPromptExchange(prompt, replyText = createAdditionalPromptReply(prompt)) {
       const userBubble = document.createElement("div");
-      userBubble.className = "chat-bubble user-bubble";
-      userBubble.textContent = userText;
+      userBubble.className = "chat-bubble user-bubble additional-user-bubble";
+      userBubble.textContent = prompt;
 
       const botBubble = document.createElement("div");
-      botBubble.className = "chat-bubble bot-bubble";
-      botBubble.textContent = botText;
+      botBubble.className = "chat-bubble bot-bubble additional-bot-bubble";
+      botBubble.textContent = replyText;
 
-      thread.append(userBubble, botBubble);
+      return [userBubble, botBubble];
     }
 
     function createAdditionalPromptReply(prompt) {
-      return `추가 요청 "${prompt}" 내용을 반영할 수 있도록 시각화와 데이터 코멘트 업데이트가 이 영역에 이어서 표시됩니다.`;
+      return `추가 요청 "${prompt}"을(를) 세션에 저장했습니다. 실제 데이터 재분석 응답은 추후 백엔드 API 연결 후 제공됩니다.`;
     }
 
     function createVisualizationPanel() {
@@ -206,9 +208,7 @@
       const latestPrompt = prompts.length > 0 ? prompts[prompts.length - 1] : prompt;
       const compactPrompt = latestPrompt.replace(/\s+/g, " ").trim();
       const description =
-        compactPrompt.length > 28
-          ? `${compactPrompt.slice(0, 28)}...`
-          : compactPrompt;
+        compactPrompt.length > 28 ? `${compactPrompt.slice(0, 28)}...` : compactPrompt;
 
       return description ? `시각화 보드 - ${description}` : "시각화 보드";
     }
@@ -240,6 +240,15 @@
     }
 
     return page;
+  }
+
+  function escapeHtml(value) {
+    return String(value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
   }
 
   window.PublicDataDashboard.DashboardPage = DashboardPage;

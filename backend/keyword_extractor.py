@@ -1,19 +1,9 @@
 import os
-import json
-from typing import List
-
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import PromptTemplate
-
-# .env 파일 로드 (API 키 관리)
-load_dotenv()
-
-# API 키가 환경변수에 제대로 설정되어 있는지 확인
-if not os.getenv("GOOGLE_API_KEY"):
-    raise ValueError("GOOGLE_API_KEY 환경 변수가 설정되지 않았습니다. .env 파일을 확인해주세요.")
 
 # 1. Pydantic을 이용한 데이터 구조(스키마) 정의
 # 이 모델은 LLM이 반환해야 할 정확한 JSON 구조와 필드별 제약 사항을 정의합니다.
@@ -47,10 +37,23 @@ def is_retryable_error(exception: Exception) -> bool:
     wait=wait_exponential(multiplier=2, min=2, max=10),
     reraise=True
 )
+def get_google_api_key() -> str:
+    """환경 변수 또는 로컬 .env에서 Google API 키를 읽어 반환합니다."""
+    load_dotenv()
+    api_key = os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        raise ValueError("GOOGLE_API_KEY 환경 변수가 설정되지 않았습니다. 로컬 .env 또는 실행 환경 변수를 확인해주세요.")
+    return api_key
+
+
 def analyze_project_idea(user_input: str) -> ProjectAnalysis:
     """
     사용자의 아이디어를 분석하여 ProjectAnalysis 스키마에 맞는 구조화된 데이터로 반환합니다.
+
+    이 함수가 호출될 때만 환경 변수를 확인하고 LLM API를 호출합니다.
+    따라서 backend.keyword_extractor 모듈은 API 키 없이도 안전하게 import할 수 있습니다.
     """
+    get_google_api_key()
     print(f"분석 진행 중: '{user_input}' ...\n")
     
     # 3. LLM 초기화 (Gemini 2.0 Flash 모델 사용)
