@@ -288,7 +288,7 @@ curl -X POST http://localhost:8000/api/datasets/detail \
 
 ### `POST /api/datasets/resource/preview`
 
-사용자가 데이터셋 상세 카드에서 명시적으로 선택한 resource URL을 backend에서 먼저 안전하게 검사한 뒤, CSV/TSV/JSON에 한해 작은 preview를 반환합니다. 이번 범위는 URL 안전성/형식/크기 확인과 소량 preview 표시까지이며, resource 전체 다운로드·저장 또는 `/api/visualize` 자동 연결은 하지 않습니다. 원격 Excel(`.xls`, `.xlsx`)은 보안/크기 이슈 때문에 직접 파싱하지 않고, 사용자가 파일을 내려받아 기존 업로드 UI로 직접 올리는 흐름을 안내합니다.
+사용자가 데이터셋 상세 카드에서 명시적으로 선택한 resource URL을 backend에서 먼저 안전하게 검사한 뒤, CSV/TSV/JSON에 한해 작은 preview를 반환합니다. preview 자체는 소량 확인용이며, resource 전체 분석은 자동으로 실행되지 않습니다. 원격 Excel(`.xls`, `.xlsx`)은 보안/크기 이슈 때문에 직접 파싱하지 않고, 사용자가 파일을 내려받아 기존 업로드 UI로 직접 올리는 흐름을 안내합니다.
 
 요청 예시:
 
@@ -328,6 +328,34 @@ curl -X POST http://localhost:8000/api/datasets/resource/preview \
 ```
 
 `resource.url`이 없으면 400을 반환합니다. `http://`와 `https://`만 허용하며 `file://`, localhost, private IP, loopback, link-local, internal host 접근은 차단합니다. 외부 요청은 timeout과 최대 byte 수 제한을 두고, redirect 후 최종 URL host도 다시 검사합니다. 응답 metadata URL에는 `serviceKey`, `api_key`, `token`, `secret` 등 민감 query 값을 `REDACTED`로 치환해 실제 key/secret이 노출되지 않도록 합니다. 외부 요청 실패, timeout, 파싱 실패는 안전한 오류 메시지로만 반환합니다.
+
+
+### `POST /api/datasets/resource/visualize`
+
+사용자가 resource preview 또는 후보 카드에서 **“이 리소스로 시각화”** 버튼을 명시적으로 누른 경우에만 원격 resource 분석을 수행합니다. 후보 검색, 상세 조회, preview 성공만으로는 원격 원본을 전체 다운로드하거나 분석하지 않습니다.
+
+지원 범위는 원격 CSV/TSV/JSON입니다. CSV/TSV는 제한된 byte 범위 안에서 임시 파일로 저장한 뒤 기존 `backend.data_visualizer.IntelligentVisualizerEngine` 분석 흐름을 재사용합니다. JSON은 top-level 객체 배열 또는 `data`/`items`/`records` 같은 배열을 표 형태 CSV로 변환할 수 있을 때만 분석하고, 변환이 어렵다면 안전한 422 오류를 반환합니다. 원격 Excel(`.xls`, `.xlsx`) 자동 분석은 아직 지원하지 않으며 기존 파일 업로드 UI를 사용해야 합니다.
+
+보안/운영 제한은 preview와 같은 URL 안전성 원칙을 재사용합니다. `http`/`https` 외 scheme, `file://`, localhost, loopback, private IP, link-local/internal host 접근을 차단하고, redirect 후 최종 host도 다시 검사합니다. timeout과 최대 다운로드 byte 제한을 적용하며, `serviceKey`, `api_key`, `token`, `secret` 등 민감 query string은 응답 metadata에서 `REDACTED`로 마스킹합니다. 원격 원본은 repository 내부에 저장하지 않고 `tempfile` 임시 파일로만 처리하며 `finally`에서 삭제합니다.
+
+요청 예시:
+
+```bash
+curl -X POST http://localhost:8000/api/datasets/resource/visualize \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "resource": {
+      "name": "샘플 CSV",
+      "format": "CSV",
+      "url": "https://example.test/data.csv",
+      "description": "설명",
+      "is_downloadable": true,
+      "is_api": false
+    },
+    "query": "사용자 프롬프트",
+    "core_keyword": "키워드"
+  }'
+```
 
 ### `POST /api/visualize`
 
@@ -430,7 +458,8 @@ GitHub Actions의 `CI` workflow는 `main` 브랜치 push와 `main` 대상 pull r
 
 - `/api/visualize` 고급 차트 렌더링 및 대용량 데이터 UX 개선
 - 공공데이터포털 실제 상세 endpoint 확정 및 실데이터 다운로드/API 호출 연동
-- resource preview 결과를 사용자가 확인한 뒤 `/api/visualize` 업로드/분석 흐름과 안전하게 연결하는 후속 UX 설계
+- resource preview 후 사용자가 명시적으로 “이 리소스로 시각화”를 누르는 CSV/TSV/JSON 분석 UX 확인
+- 원격 Excel 자동 분석은 미지원이므로 파일 업로드 안내가 표시되는지 확인
 - 실제 인증 방식 도입 및 localStorage 데모 회원가입/로그인 제거
 - 운영 배포 시 허용할 정확한 CORS origin 설정
 - 운영 배포 시 `GOOGLE_API_KEY` 등 secret을 배포 플랫폼의 secret manager 또는 환경 변수로 안전하게 관리

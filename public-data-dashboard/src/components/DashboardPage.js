@@ -21,9 +21,12 @@
     isResourcePreviewLoading,
     resourcePreviewResult,
     resourcePreviewError,
+    isResourceVisualizationLoading,
+    resourceVisualizationError,
     onDatasetSearchSubmit,
     onDatasetSelect,
     onResourcePreview,
+    onResourceVisualization,
     selectedDatasetFile,
     isVisualizationLoading,
     visualizationResult,
@@ -458,10 +461,19 @@
         previewButton.addEventListener("click", () => onResourcePreview(item));
         card.appendChild(previewButton);
 
+        const visualizeButton = document.createElement("button");
+        visualizeButton.type = "button";
+        visualizeButton.className = "resource-visualize-button ghost-button";
+        const isSelectedForVisualization = isSameResource(item, selectedResource) && isResourceVisualizationLoading;
+        visualizeButton.textContent = isSelectedForVisualization ? "선택한 리소스를 분석 중..." : "이 리소스로 시각화";
+        visualizeButton.disabled = isResourceVisualizationLoading || !isVisualizableResource(item);
+        visualizeButton.addEventListener("click", () => onResourceVisualization(item));
+        card.appendChild(visualizeButton);
+
         if (!isPreviewableResource(item)) {
           const hint = document.createElement("p");
           hint.className = "resource-preview-hint";
-          hint.textContent = "원격 미리보기는 CSV/TSV/JSON만 지원합니다. Excel은 직접 업로드를 사용해 주세요.";
+          hint.textContent = "원격 미리보기/자동 분석은 CSV/TSV/JSON만 지원합니다. 원격 Excel은 아직 자동 분석하지 않으며 직접 파일 업로드를 사용하세요.";
           card.appendChild(hint);
         }
 
@@ -485,8 +497,16 @@
       title.textContent = "선택 리소스 미리보기";
       const scope = document.createElement("p");
       scope.className = "muted-text compact";
-      scope.textContent = "전체 데이터 다운로드/자동 시각화는 후속 작업입니다. 현재는 안전성·형식·크기 제한을 통과한 소량 preview만 표시합니다.";
+      scope.textContent = "미리보기는 소량만 가져옵니다. 전체 분석은 사용자가 ‘이 리소스로 시각화’를 명시적으로 눌렀을 때만 실행됩니다.";
       block.append(title, scope);
+
+      if (isResourceVisualizationLoading) {
+        block.appendChild(createDatasetStatus("loading", "선택한 리소스를 분석 중..."));
+      }
+
+      if (resourceVisualizationError) {
+        block.appendChild(createDatasetStatus("error", `리소스 시각화 실패: ${resourceVisualizationError}`));
+      }
 
       if (isResourcePreviewLoading) {
         block.appendChild(createDatasetStatus("loading", "선택한 resource URL을 안전하게 검사하고 미리보기를 가져오는 중입니다..."));
@@ -526,6 +546,16 @@
       message.className = "resource-preview-hint";
       message.textContent = resourcePreviewResult.preview.message || "소량 preview만 표시합니다.";
       block.appendChild(message);
+
+      if (selectedResource && isVisualizableResource(selectedResource)) {
+        const visualizeButton = document.createElement("button");
+        visualizeButton.type = "button";
+        visualizeButton.className = "primary-button resource-visualize-button";
+        visualizeButton.textContent = isResourceVisualizationLoading ? "선택한 리소스를 분석 중..." : "이 리소스로 시각화";
+        visualizeButton.disabled = isResourceVisualizationLoading;
+        visualizeButton.addEventListener("click", () => onResourceVisualization(selectedResource));
+        block.appendChild(visualizeButton);
+      }
       return block;
     }
 
@@ -619,6 +649,10 @@
       return Boolean(item.url) && (format.includes("CSV") || format.includes("TSV") || format.includes("JSON") || url.endsWith(".csv") || url.endsWith(".tsv") || url.endsWith(".json"));
     }
 
+    function isVisualizableResource(resource) {
+      return isPreviewableResource(resource);
+    }
+
     function isSameResource(left, right) {
       if (!left || !right) {
         return false;
@@ -710,10 +744,18 @@
       resultBox.className = "visualization-result";
       resultBox.setAttribute("aria-live", "polite");
 
-      if (isVisualizationLoading) {
+      if (isVisualizationLoading || isResourceVisualizationLoading) {
         const message = document.createElement("p");
         message.className = "visualization-status loading";
-        message.textContent = "데이터 시각화 분석 중...";
+        message.textContent = isResourceVisualizationLoading ? "선택한 리소스를 분석 중..." : "데이터 시각화 분석 중...";
+        resultBox.appendChild(message);
+        return resultBox;
+      }
+
+      if (resourceVisualizationError) {
+        const message = document.createElement("p");
+        message.className = "visualization-status error";
+        message.textContent = `리소스 시각화 실패: ${resourceVisualizationError}`;
         resultBox.appendChild(message);
         return resultBox;
       }
@@ -730,7 +772,7 @@
         const empty = document.createElement("div");
         empty.className = "visualization-empty";
         empty.innerHTML = `
-          <p>파일을 업로드하면 /api/visualize 분석 결과가 이 영역에 표시됩니다.</p>
+          <p>파일 업로드 또는 명시적으로 선택한 리소스 분석 결과가 이 영역에 표시됩니다.</p>
           <span>외부 차트 라이브러리 없이 Vanilla JS와 CSS로 간단한 그래프/표를 렌더링합니다.</span>
         `;
         resultBox.appendChild(empty);
