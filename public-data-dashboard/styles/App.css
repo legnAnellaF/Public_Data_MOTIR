@@ -839,3 +839,39 @@ textarea:focus {
     grid-template-columns: 1fr;
   }
 }
+
+.keyword-status {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border: 1px solid rgba(15, 118, 110, 0.22);
+  border-left: 4px solid var(--teal);
+  border-radius: 8px;
+  background: #f0fdfa;
+}
+
+.keyword-status.error {
+  border-color: rgba(220, 38, 38, 0.22);
+  border-left-color: var(--danger);
+  background: #fff1f2;
+}
+
+.keyword-status span {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 850;
+}
+
+.keyword-status p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.keyword-bubble {
+  border-left: 4px solid var(--teal);
+}
+
+.keyword-bubble.keyword-error {
+  border-left-color: var(--danger);
+}

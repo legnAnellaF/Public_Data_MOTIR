@@ -196,6 +196,9 @@
     additionalPrompts: [],
     promptHistory: storedPromptHistory,
     promptSessions: storedPromptSessions,
+    isKeywordLoading: false,
+    keywordResult: null,
+    keywordError: "",
   };
 
   if (storedCurrentUser && !hasStoredUser) {
@@ -233,6 +236,9 @@
       additionalPrompts: [],
       promptHistory: readStoredPromptHistory(trimmedUserId),
       promptSessions: readStoredPromptSessions(trimmedUserId),
+      isKeywordLoading: false,
+      keywordResult: null,
+      keywordError: "",
     });
 
     return {
@@ -272,6 +278,9 @@
       additionalPrompts: [],
       promptHistory: [],
       promptSessions: {},
+      isKeywordLoading: false,
+      keywordResult: null,
+      keywordError: "",
     });
   }
 
@@ -292,7 +301,49 @@
       additionalPrompts: [],
       promptHistory: [],
       promptSessions: {},
+      isKeywordLoading: false,
+      keywordResult: null,
+      keywordError: "",
     });
+  }
+
+  function requestKeywordExtraction(prompt) {
+    if (!window.PublicDataDashboard.Api) {
+      setState({
+        isKeywordLoading: false,
+        keywordResult: null,
+        keywordError: "백엔드 API 클라이언트를 불러오지 못했습니다.",
+      });
+      return;
+    }
+
+    const requestedPrompt = prompt;
+
+    window.PublicDataDashboard.Api.extractKeywords(prompt)
+      .then((result) => {
+        if (state.mainPrompt !== requestedPrompt || state.currentView !== "dashboard") {
+          return;
+        }
+
+        setState({
+          isKeywordLoading: false,
+          keywordResult: result,
+          keywordError: "",
+        });
+      })
+      .catch((error) => {
+        if (state.mainPrompt !== requestedPrompt || state.currentView !== "dashboard") {
+          return;
+        }
+
+        setState({
+          isKeywordLoading: false,
+          keywordResult: null,
+          keywordError: error && error.message
+            ? error.message
+            : "백엔드 API 연결 실패 또는 키워드 추출 실패",
+        });
+      });
   }
 
   function handleMainPromptSubmit(prompt) {
@@ -310,7 +361,12 @@
       additionalPrompts: session.additionalPrompts || [],
       promptHistory: nextHistory,
       promptSessions: nextSessions,
+      isKeywordLoading: true,
+      keywordResult: null,
+      keywordError: "",
     });
+
+    requestKeywordExtraction(trimmedPrompt);
   }
 
   function handlePromptHistorySelect(prompt) {
@@ -321,7 +377,12 @@
       currentView: "dashboard",
       additionalPrompt: "",
       additionalPrompts: session.additionalPrompts || [],
+      isKeywordLoading: true,
+      keywordResult: null,
+      keywordError: "",
     });
+
+    requestKeywordExtraction(prompt);
   }
 
   function handlePromptHistoryRemove(promptId) {
@@ -402,7 +463,16 @@
         additionalPrompts: state.additionalPrompts,
         onAdditionalPromptChange: handleAdditionalPromptChange,
         onAdditionalPromptSubmit: handleAdditionalPromptSubmit,
-        onNewPrompt: () => setState({ currentView: "prompt", mainPrompt: "" }),
+        isKeywordLoading: state.isKeywordLoading,
+        keywordResult: state.keywordResult,
+        keywordError: state.keywordError,
+        onNewPrompt: () => setState({
+          currentView: "prompt",
+          mainPrompt: "",
+          isKeywordLoading: false,
+          keywordResult: null,
+          keywordError: "",
+        }),
         onLogout: handleLogout,
       })
     );

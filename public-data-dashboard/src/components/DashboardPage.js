@@ -7,6 +7,9 @@
     additionalPrompts,
     onAdditionalPromptChange,
     onAdditionalPromptSubmit,
+    isKeywordLoading,
+    keywordResult,
+    keywordError,
     onNewPrompt,
     onLogout,
   }) {
@@ -74,6 +77,8 @@
       note.className = "muted-text";
       note.textContent = "추후 이 영역에는 입력 프롬포트 기반 자동 목차가 표시됩니다.";
 
+      const keywordStatus = createKeywordStatusBlock();
+
       const list = document.createElement("ol");
       list.className = "outline-list";
       ["키워드 분석", "관련 공공데이터 탐색", "통계 데이터 시각화", "종합 의견"].forEach(
@@ -86,8 +91,57 @@
 
       return window.PublicDataDashboard.Panel({
         title: "분석 목차",
-        children: [promptBlock, note, list],
+        children: [promptBlock, note, keywordStatus, list],
       });
+    }
+
+
+    function createKeywordStatusBlock() {
+      const wrapper = document.createElement("div");
+      wrapper.className = `keyword-status ${keywordError ? "error" : ""}`.trim();
+
+      const label = document.createElement("span");
+      label.textContent = "백엔드 키워드 API";
+
+      const message = document.createElement("p");
+      message.textContent = getKeywordMessage();
+
+      wrapper.append(label, message);
+      return wrapper;
+    }
+
+    function getKeywordMessage() {
+      if (isKeywordLoading) {
+        return "키워드 분석 중...";
+      }
+
+      if (keywordError) {
+        return `백엔드 API 연결 실패 또는 키워드 추출 실패: ${keywordError}`;
+      }
+
+      const keywords = formatKeywordResult(keywordResult);
+
+      if (keywords) {
+        return `추출 키워드: ${keywords}`;
+      }
+
+      return "키워드 추출 결과가 아직 없습니다. 백엔드가 실행 중이면 프롬포트 제출 후 자동으로 표시됩니다.";
+    }
+
+    function formatKeywordResult(result) {
+      if (!result || typeof result !== "object") {
+        return "";
+      }
+
+      if (typeof result.topic === "string" && result.topic.trim()) {
+        return result.topic.trim();
+      }
+
+      if (Array.isArray(result.keywords)) {
+        return result.keywords.filter(Boolean).join(" ").trim();
+      }
+
+      return "";
     }
 
     function createAdditionalPromptPanel() {
@@ -193,6 +247,7 @@
       chartCopy.innerHTML = `
         <p>추후 공공데이터 기반 그래프가 이 영역에 표시됩니다.</p>
         <span>막대그래프, 선그래프, 표, 지도 등 시각자료 출력 예정</span>
+        <span>/api/visualize 연동 함수는 준비되어 있으며 파일 업로드 UI와 차트 렌더링은 후속 작업입니다.</span>
       `;
 
       chart.append(chartBars, chartCopy);
@@ -226,12 +281,16 @@
       botBubble.textContent =
         "입력한 프롬포트를 바탕으로 데이터 분석 코멘트가 이곳에 표시됩니다.";
 
+      const keywordBubble = document.createElement("div");
+      keywordBubble.className = `chat-bubble bot-bubble keyword-bubble ${keywordError ? "keyword-error" : ""}`.trim();
+      keywordBubble.textContent = getKeywordMessage();
+
       const botBubbleSecond = document.createElement("div");
       botBubbleSecond.className = "chat-bubble bot-bubble muted-bubble";
       botBubbleSecond.textContent =
         "추후 이 영역에서는 그래프 해석, 데이터 경향, 종합 의견이 챗봇 형태로 출력됩니다.";
 
-      wrapper.append(userBubble, botBubble, botBubbleSecond);
+      wrapper.append(userBubble, botBubble, keywordBubble, botBubbleSecond);
 
       return window.PublicDataDashboard.Panel({
         title: "데이터 코멘트",
