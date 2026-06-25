@@ -7,15 +7,46 @@ then set PUBLIC_DATA_PORTAL_BASE_URL in deployment without hard-coding secrets h
 
 from __future__ import annotations
 
+import csv
+import ipaddress
 import json
 import os
+import socket
 from dataclasses import dataclass
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
 DEFAULT_PUBLIC_DATA_PORTAL_BASE_URL = "https://api.odcloud.kr/api"
+
+
+RESOURCE_PREVIEW_MAX_BYTES = 256 * 1024
+RESOURCE_PREVIEW_TIMEOUT_SECONDS = 8
+RESOURCE_PREVIEW_DEFAULT_ROWS = 10
+RESOURCE_PREVIEW_MAX_ROWS = 20
+_RESOURCE_PREVIEW_SAFE_FIELDS = ("name", "format", "url", "description", "is_downloadable", "is_api")
+_SENSITIVE_QUERY_KEYS = {"key", "apikey", "api_key", "servicekey", "service_key", "token", "secret", "password"}
+
+
+@dataclass(frozen=True)
+class ResourcePreviewResult:
+    """Safe, bounded preview response for a selected resource URL."""
+
+    status: str
+    resource: dict[str, Any]
+    preview: dict[str, Any] | None = None
+    metadata: dict[str, Any] | None = None
+    message: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "resource": self.resource,
+            "preview": self.preview,
+            "metadata": self.metadata or {},
+            "message": self.message,
+        }
 
 
 @dataclass(frozen=True)
@@ -340,3 +371,178 @@ def fetch_dataset_search(keyword: str, page: int = 1, per_page: int = 10) -> Dat
         )
 
     return normalize_dataset_search_response(payload, keyword)
+
+
+def sanitize_url_for_response(url: str) -> str:
+    """Return URL safe for metadata/log-style responses by redacting sensitive query values."""
+    parsed = urlsplit(_clean_string(url))
+    if not parsed.scheme or not parsed.netloc:
+        return _clean_string(url)
+    safe_query = urlencode(
+        [(key, "REDACTED" if key.lower() in _SENSITIVE_QUERY_KEYS else value) for key, value in parse_qsl(parsed.query, keep_blank_values=True)]
+    )
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, safe_query, ""))
+
+
+def _is_safe_hostname(hostname: str) -> bool:
+    host = hostname.strip().strip("[]").lower()
+    if not host or host in {"localhost", "localhost.localdomain"} or host.endswith(".localhost") or host.endswith(".local"):
+        return False
+
+    try:
+        addresses = [ipaddress.ip_address(host)]
+    except ValueError:
+        try:
+            infos = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+        except OSError:
+            # DNS failure is treated as external fetch failure later; the syntactic host is not internal.
+            return True
+        addresses = []
+        for info in infos:
+            try:
+                addresses.append(ipaddress.ip_address(info[4][0]))
+            except ValueError:
+                return False
+
+    for address in addresses:
+        if (
+            address.is_private
+            or address.is_loopback
+            or address.is_link_local
+            or address.is_multicast
+            or address.is_reserved
+            or address.is_unspecified
+        ):
+            return False
+    return True
+
+
+def validate_resource_url(resource: dict[str, Any]) -> str:
+    """Validate selected resource URL against SSRF-prone schemes and internal hosts."""
+    url = _first_nullable_text(resource, ("url", "downloadUrl", "download_url", "fileUrl", "apiUrl", "endpoint", "link", "다운로드URL", "APIURL"))
+    if not url:
+        raise ValueError("resource.url이 필요합니다.")
+
+    parsed = urlsplit(url)
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError("http:// 또는 https:// URL만 미리보기할 수 있습니다.")
+    if not parsed.hostname or not _is_safe_hostname(parsed.hostname):
+        raise ValueError("localhost, private IP, 내부망 host의 resource URL은 미리보기할 수 없습니다.")
+    return url
+
+
+def infer_resource_format(resource: dict[str, Any], content_type: str = "") -> str:
+    """Infer preview format from declared metadata, content-type, and URL extension."""
+    declared = _infer_resource_format(resource).upper()
+    if declared in {"CSV", "TSV", "JSON", "XLS", "XLSX"}:
+        return declared
+
+    lowered_type = content_type.lower()
+    if "json" in lowered_type:
+        return "JSON"
+    if "tab-separated" in lowered_type or "tsv" in lowered_type:
+        return "TSV"
+    if "csv" in lowered_type or "text/plain" in lowered_type:
+        return "CSV"
+
+    url = _clean_string(resource.get("url"))
+    path = urlsplit(url).path.lower()
+    if path.endswith(".json"):
+        return "JSON"
+    if path.endswith(".tsv"):
+        return "TSV"
+    if path.endswith(".csv"):
+        return "CSV"
+    if path.endswith(".xlsx"):
+        return "XLSX"
+    if path.endswith(".xls"):
+        return "XLS"
+    return "UNKNOWN"
+
+
+def _safe_resource_payload(resource: dict[str, Any]) -> dict[str, Any]:
+    return {key: (sanitize_url_for_response(resource[key]) if key == "url" and resource.get(key) else resource.get(key)) for key in _RESOURCE_PREVIEW_SAFE_FIELDS if key in resource}
+
+
+def _read_limited_response(response: Any, max_bytes: int) -> tuple[bytes, bool]:
+    data = response.read(max_bytes + 1)
+    return data[:max_bytes], len(data) > max_bytes
+
+
+def normalize_resource_preview(resource: dict[str, Any], raw_bytes: bytes, fmt: str, max_rows: int, truncated: bool) -> dict[str, Any]:
+    """Parse a bounded byte sample into a frontend-friendly preview payload."""
+    text = raw_bytes.decode("utf-8-sig", errors="replace")
+    row_limit = max(1, min(max_rows, RESOURCE_PREVIEW_MAX_ROWS))
+
+    if fmt in {"CSV", "TSV"}:
+        delimiter = "\t" if fmt == "TSV" else ","
+        sample = text.splitlines()[: row_limit + 2]
+        rows = list(csv.reader(sample, delimiter=delimiter))
+        if not rows:
+            raise ValueError("미리보기할 행을 찾지 못했습니다.")
+        headers = [str(value) for value in rows[0]]
+        body_rows = [[str(value) for value in row] for row in rows[1 : row_limit + 1]]
+        return {
+            "kind": "table",
+            "headers": headers,
+            "rows": body_rows,
+            "truncated": truncated or len(rows) > row_limit + 1,
+            "message": f"처음 {len(body_rows)}행만 표시합니다.",
+        }
+
+    if fmt == "JSON":
+        payload = json.loads(text)
+        if isinstance(payload, list):
+            snippet = payload[:row_limit]
+            is_truncated = truncated or len(payload) > row_limit
+        elif isinstance(payload, dict):
+            snippet = dict(list(payload.items())[:row_limit])
+            is_truncated = truncated or len(payload) > row_limit
+        else:
+            snippet = payload
+            is_truncated = truncated
+        return {
+            "kind": "json",
+            "data": snippet,
+            "truncated": is_truncated,
+            "message": "JSON top-level 일부만 표시합니다.",
+        }
+
+    if fmt in {"XLS", "XLSX"}:
+        raise ValueError("원격 Excel 파일은 이번 단계에서 직접 파싱하지 않습니다. 파일을 내려받아 직접 업로드해 주세요.")
+    raise ValueError("CSV/TSV/JSON 리소스만 미리보기를 지원합니다.")
+
+
+def fetch_resource_preview(resource: dict[str, Any], max_bytes: int = RESOURCE_PREVIEW_MAX_BYTES, max_rows: int = RESOURCE_PREVIEW_DEFAULT_ROWS) -> ResourcePreviewResult:
+    """Fetch a small bounded preview for a validated external CSV/TSV/JSON resource."""
+    source = resource if isinstance(resource, dict) else {}
+    safe_resource = _safe_resource_payload(source)
+    url = validate_resource_url(source)
+    request = Request(url, headers={"Accept": "text/csv, application/json, text/tab-separated-values, */*", "User-Agent": "Public-Data-MOTIR/1.0"})
+
+    try:
+        with urlopen(request, timeout=RESOURCE_PREVIEW_TIMEOUT_SECONDS) as response:  # noqa: S310 - URL is validated against internal hosts and unsafe schemes.
+            final_url = response.geturl() if hasattr(response, "geturl") else url
+            final_parsed = urlsplit(final_url)
+            if final_parsed.hostname and not _is_safe_hostname(final_parsed.hostname):
+                raise ValueError("redirect 대상 host가 안전하지 않습니다.")
+            content_type = response.headers.get("Content-Type", "") if getattr(response, "headers", None) else ""
+            fmt = infer_resource_format({**source, "url": final_url}, content_type)
+            raw_bytes, truncated = _read_limited_response(response, max_bytes)
+    except ValueError:
+        raise
+    except (HTTPError, URLError, TimeoutError, OSError):
+        return ResourcePreviewResult(status="error", resource=safe_resource, preview=None, metadata={}, message="resource URL 호출에 실패했습니다. URL, timeout 또는 접근 권한을 확인해 주세요.")
+
+    try:
+        preview = normalize_resource_preview(source, raw_bytes, fmt, max_rows, truncated)
+    except (ValueError, json.JSONDecodeError, csv.Error, UnicodeError) as exc:
+        return ResourcePreviewResult(status="error", resource=safe_resource, preview=None, metadata={"content_type": content_type, "bytes_read": len(raw_bytes), "source_url": sanitize_url_for_response(final_url)}, message=str(exc))
+
+    return ResourcePreviewResult(
+        status="success",
+        resource=safe_resource,
+        preview=preview,
+        metadata={"content_type": content_type, "bytes_read": len(raw_bytes), "source_url": sanitize_url_for_response(final_url)},
+        message="",
+    )

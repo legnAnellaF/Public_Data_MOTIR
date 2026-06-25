@@ -206,6 +206,10 @@
     isDatasetDetailLoading: false,
     datasetDetailResult: null,
     datasetDetailError: "",
+    selectedResource: null,
+    isResourcePreviewLoading: false,
+    resourcePreviewResult: null,
+    resourcePreviewError: "",
     selectedDatasetFile: null,
     isVisualizationLoading: false,
     visualizationResult: null,
@@ -257,6 +261,10 @@
       isDatasetDetailLoading: false,
       datasetDetailResult: null,
       datasetDetailError: "",
+      selectedResource: null,
+      isResourcePreviewLoading: false,
+      resourcePreviewResult: null,
+      resourcePreviewError: "",
       selectedDatasetFile: null,
       isVisualizationLoading: false,
       visualizationResult: null,
@@ -310,6 +318,10 @@
       isDatasetDetailLoading: false,
       datasetDetailResult: null,
       datasetDetailError: "",
+      selectedResource: null,
+      isResourcePreviewLoading: false,
+      resourcePreviewResult: null,
+      resourcePreviewError: "",
       selectedDatasetFile: null,
       isVisualizationLoading: false,
       visualizationResult: null,
@@ -344,6 +356,10 @@
       isDatasetDetailLoading: false,
       datasetDetailResult: null,
       datasetDetailError: "",
+      selectedResource: null,
+      isResourcePreviewLoading: false,
+      resourcePreviewResult: null,
+      resourcePreviewError: "",
       selectedDatasetFile: null,
       isVisualizationLoading: false,
       visualizationResult: null,
@@ -419,6 +435,10 @@
       isDatasetDetailLoading: false,
       datasetDetailResult: null,
       datasetDetailError: "",
+      selectedResource: null,
+      isResourcePreviewLoading: false,
+      resourcePreviewResult: null,
+      resourcePreviewError: "",
       selectedDatasetFile: null,
       isVisualizationLoading: false,
       visualizationResult: null,
@@ -446,6 +466,10 @@
       isDatasetDetailLoading: false,
       datasetDetailResult: null,
       datasetDetailError: "",
+      selectedResource: null,
+      isResourcePreviewLoading: false,
+      resourcePreviewResult: null,
+      resourcePreviewError: "",
       selectedDatasetFile: null,
       isVisualizationLoading: false,
       visualizationResult: null,
@@ -523,6 +547,10 @@
         isDatasetDetailLoading: false,
         datasetDetailResult: null,
         datasetDetailError: "",
+        selectedResource: null,
+        isResourcePreviewLoading: false,
+        resourcePreviewResult: null,
+        resourcePreviewError: "",
       });
       return;
     }
@@ -536,6 +564,10 @@
         isDatasetDetailLoading: false,
         datasetDetailResult: null,
         datasetDetailError: "",
+        selectedResource: null,
+        isResourcePreviewLoading: false,
+        resourcePreviewResult: null,
+        resourcePreviewError: "",
       });
       return;
     }
@@ -599,6 +631,10 @@
         isDatasetDetailLoading: false,
         datasetDetailResult: null,
         datasetDetailError: "",
+        selectedResource: null,
+        isResourcePreviewLoading: false,
+        resourcePreviewResult: null,
+        resourcePreviewError: "",
       });
       return;
     }
@@ -608,6 +644,10 @@
       isDatasetDetailLoading: true,
       datasetDetailResult: null,
       datasetDetailError: "",
+      selectedResource: null,
+      isResourcePreviewLoading: false,
+      resourcePreviewResult: null,
+      resourcePreviewError: "",
     });
 
     if (!window.PublicDataDashboard.Api || !window.PublicDataDashboard.Api.fetchDatasetDetail) {
@@ -642,6 +682,61 @@
           datasetDetailError: error && error.message
             ? error.message
             : "선택한 데이터셋 상세 조회에 실패했습니다.",
+        });
+      });
+  }
+
+  function handleResourcePreview(resource) {
+    const selected = resource || null;
+
+    if (!selected) {
+      setState({
+        selectedResource: null,
+        isResourcePreviewLoading: false,
+        resourcePreviewResult: null,
+        resourcePreviewError: "미리보기할 리소스를 선택해 주세요.",
+      });
+      return;
+    }
+
+    if (!window.PublicDataDashboard.Api || !window.PublicDataDashboard.Api.previewDatasetResource) {
+      setState({
+        selectedResource: selected,
+        isResourcePreviewLoading: false,
+        resourcePreviewResult: null,
+        resourcePreviewError: "리소스 미리보기 API 클라이언트를 불러오지 못했습니다.",
+      });
+      return;
+    }
+
+    setState({
+      selectedResource: selected,
+      isResourcePreviewLoading: true,
+      resourcePreviewResult: null,
+      resourcePreviewError: "",
+    });
+
+    window.PublicDataDashboard.Api.previewDatasetResource(selected, { maxRows: 10 })
+      .then((result) => {
+        if (state.selectedResource !== selected || state.currentView !== "dashboard") {
+          return;
+        }
+
+        setState({
+          isResourcePreviewLoading: false,
+          resourcePreviewResult: result,
+          resourcePreviewError: "",
+        });
+      })
+      .catch((error) => {
+        if (state.selectedResource !== selected || state.currentView !== "dashboard") {
+          return;
+        }
+
+        setState({
+          isResourcePreviewLoading: false,
+          resourcePreviewResult: null,
+          resourcePreviewError: error && error.message ? error.message : "선택한 리소스 미리보기에 실패했습니다.",
         });
       });
   }
@@ -759,8 +854,13 @@
         isDatasetDetailLoading: state.isDatasetDetailLoading,
         datasetDetailResult: state.datasetDetailResult,
         datasetDetailError: state.datasetDetailError,
+        selectedResource: state.selectedResource,
+        isResourcePreviewLoading: state.isResourcePreviewLoading,
+        resourcePreviewResult: state.resourcePreviewResult,
+        resourcePreviewError: state.resourcePreviewError,
         onDatasetSearchSubmit: handleDatasetSearchSubmit,
         onDatasetSelect: handleDatasetSelect,
+        onResourcePreview: handleResourcePreview,
         selectedDatasetFile: state.selectedDatasetFile,
         isVisualizationLoading: state.isVisualizationLoading,
         visualizationResult: state.visualizationResult,

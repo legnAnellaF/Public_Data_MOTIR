@@ -17,8 +17,13 @@
     isDatasetDetailLoading,
     datasetDetailResult,
     datasetDetailError,
+    selectedResource,
+    isResourcePreviewLoading,
+    resourcePreviewResult,
+    resourcePreviewError,
     onDatasetSearchSubmit,
     onDatasetSelect,
+    onResourcePreview,
     selectedDatasetFile,
     isVisualizationLoading,
     visualizationResult,
@@ -417,6 +422,7 @@
       list.className = "resource-candidate-list";
       resources.forEach((resource) => list.appendChild(createResourceCandidateCard(resource)));
       wrapper.appendChild(list);
+      wrapper.appendChild(createResourcePreviewBlock());
       return wrapper;
     }
 
@@ -444,6 +450,21 @@
 
       card.append(header, description, flags);
       if (item.url) {
+        const previewButton = document.createElement("button");
+        previewButton.type = "button";
+        previewButton.className = isSameResource(item, selectedResource) ? "primary-button" : "ghost-button";
+        previewButton.textContent = isSameResource(item, selectedResource) && isResourcePreviewLoading ? "미리보기 중..." : "미리보기";
+        previewButton.disabled = isResourcePreviewLoading || !isPreviewableResource(item);
+        previewButton.addEventListener("click", () => onResourcePreview(item));
+        card.appendChild(previewButton);
+
+        if (!isPreviewableResource(item)) {
+          const hint = document.createElement("p");
+          hint.className = "resource-preview-hint";
+          hint.textContent = "원격 미리보기는 CSV/TSV/JSON만 지원합니다. Excel은 직접 업로드를 사용해 주세요.";
+          card.appendChild(hint);
+        }
+
         const link = document.createElement("a");
         link.className = "dataset-detail-link resource-url-link";
         link.href = item.url;
@@ -453,6 +474,87 @@
         card.appendChild(link);
       }
       return card;
+    }
+
+
+    function createResourcePreviewBlock() {
+      const block = document.createElement("section");
+      block.className = "resource-preview-card";
+
+      const title = document.createElement("h4");
+      title.textContent = "선택 리소스 미리보기";
+      const scope = document.createElement("p");
+      scope.className = "muted-text compact";
+      scope.textContent = "전체 데이터 다운로드/자동 시각화는 후속 작업입니다. 현재는 안전성·형식·크기 제한을 통과한 소량 preview만 표시합니다.";
+      block.append(title, scope);
+
+      if (isResourcePreviewLoading) {
+        block.appendChild(createDatasetStatus("loading", "선택한 resource URL을 안전하게 검사하고 미리보기를 가져오는 중입니다..."));
+        return block;
+      }
+
+      if (resourcePreviewError) {
+        block.appendChild(createDatasetStatus("error", `리소스 미리보기 실패: ${resourcePreviewError}`));
+        return block;
+      }
+
+      if (!resourcePreviewResult || !resourcePreviewResult.preview) {
+        block.appendChild(createDatasetStatus("empty", "리소스 후보의 미리보기 버튼을 누르면 CSV/TSV/JSON 일부가 여기에 표시됩니다."));
+        return block;
+      }
+
+      const meta = resourcePreviewResult.metadata && typeof resourcePreviewResult.metadata === "object"
+        ? resourcePreviewResult.metadata
+        : {};
+      const metaText = document.createElement("p");
+      metaText.className = "resource-preview-meta";
+      metaText.textContent = `content-type: ${meta.content_type || "unknown"} · bytes read: ${meta.bytes_read || 0}`;
+      block.appendChild(metaText);
+
+      if (resourcePreviewResult.preview.kind === "table") {
+        block.appendChild(createResourcePreviewTable(resourcePreviewResult.preview));
+      } else if (resourcePreviewResult.preview.kind === "json") {
+        const pre = document.createElement("pre");
+        pre.className = "resource-json-preview";
+        pre.textContent = JSON.stringify(resourcePreviewResult.preview.data, null, 2);
+        block.appendChild(pre);
+      } else {
+        block.appendChild(createDatasetStatus("empty", resourcePreviewResult.preview.message || "표시 가능한 preview가 없습니다."));
+      }
+
+      const message = document.createElement("p");
+      message.className = "resource-preview-hint";
+      message.textContent = resourcePreviewResult.preview.message || "소량 preview만 표시합니다.";
+      block.appendChild(message);
+      return block;
+    }
+
+    function createResourcePreviewTable(preview) {
+      const tableWrapper = document.createElement("div");
+      tableWrapper.className = "resource-preview-table-wrap";
+      const table = document.createElement("table");
+      table.className = "resource-preview-table";
+      const thead = document.createElement("thead");
+      const headRow = document.createElement("tr");
+      (Array.isArray(preview.headers) ? preview.headers : []).forEach((header) => {
+        const th = document.createElement("th");
+        th.textContent = String(header || "");
+        headRow.appendChild(th);
+      });
+      thead.appendChild(headRow);
+      const tbody = document.createElement("tbody");
+      (Array.isArray(preview.rows) ? preview.rows : []).slice(0, 20).forEach((row) => {
+        const tr = document.createElement("tr");
+        (Array.isArray(row) ? row : []).forEach((cell) => {
+          const td = document.createElement("td");
+          td.textContent = String(cell == null ? "" : cell);
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+      table.append(thead, tbody);
+      tableWrapper.appendChild(table);
+      return tableWrapper;
     }
 
     function createDatasetStatus(type, text) {
@@ -508,6 +610,20 @@
 
       card.append(header, description, meta, actions);
       return card;
+    }
+
+    function isPreviewableResource(resource) {
+      const item = resource && typeof resource === "object" ? resource : {};
+      const format = String(item.format || "").toUpperCase();
+      const url = String(item.url || "").toLowerCase().split("?")[0];
+      return Boolean(item.url) && (format.includes("CSV") || format.includes("TSV") || format.includes("JSON") || url.endsWith(".csv") || url.endsWith(".tsv") || url.endsWith(".json"));
+    }
+
+    function isSameResource(left, right) {
+      if (!left || !right) {
+        return false;
+      }
+      return (left.url && right.url && left.url === right.url) || (left.name === right.name && left.format === right.format);
     }
 
     function appendDatasetMeta(parent, labelText, valueText) {
