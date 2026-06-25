@@ -88,3 +88,78 @@ def test_visualize_non_numeric_csv_returns_safe_error():
     body = response.json()["detail"]
     assert body["status"] == "error"
     assert "시각화 가능한 데이터" in body["message"]
+
+
+def test_dataset_search_empty_keyword_returns_400():
+    response = client.post("/api/datasets/search", json={"keyword": "   "})
+
+    assert response.status_code == 400
+    body = response.json()["detail"]
+    assert body["status"] == "error"
+    assert "keyword" in body["message"]
+
+
+def test_dataset_search_without_api_key_returns_safe_error(monkeypatch):
+    monkeypatch.delenv("PUBLIC_DATA_API_KEY", raising=False)
+
+    response = client.post("/api/datasets/search", json={"keyword": "서울 빈집"})
+
+    assert response.status_code == 503
+    body = response.json()["detail"]
+    assert body["status"] == "error"
+    assert body["items"] == []
+    assert "PUBLIC_DATA_API_KEY" in body["message"]
+    assert "secret" not in str(body).lower()
+
+
+def test_normalize_public_data_portal_response_fixture():
+    from backend.public_data_portal import normalize_dataset_search_response
+
+    payload = {
+        "data": [
+            {
+                "datasetId": "ds-1",
+                "datasetName": "서울특별시 빈집 현황",
+                "desc": "서울 지역 빈집 통계 데이터",
+                "orgName": "서울특별시",
+                "categoryName": "주택",
+                "fileFormat": "CSV",
+                "modifiedDate": "2025-12-31",
+                "detailUrl": "https://example.test/datasets/ds-1",
+            }
+        ]
+    }
+
+    result = normalize_dataset_search_response(payload, "서울 빈집")
+
+    assert result.status == "success"
+    assert result.query == "서울 빈집"
+    assert result.items[0]["id"] == "ds-1"
+    assert result.items[0]["title"] == "서울특별시 빈집 현황"
+    assert result.items[0]["provider"] == "서울특별시"
+    assert result.items[0]["format"] == "CSV"
+    assert result.items[0]["raw"]["datasetId"] == "ds-1"
+
+
+def test_dataset_search_success_with_mocked_client(monkeypatch):
+    from backend.public_data_portal import DatasetSearchResult
+
+    def fake_fetch(keyword, page=1, per_page=10):
+        assert keyword == "서울 빈집"
+        assert page == 2
+        assert per_page == 5
+        return DatasetSearchResult(
+            status="success",
+            query=keyword,
+            items=[{"id": "1", "title": "서울 빈집", "description": "", "provider": "서울시", "category": "", "format": "CSV", "updated_at": None, "url": None, "raw": {}}],
+        )
+
+    monkeypatch.setattr("backend.app.fetch_dataset_search", fake_fetch)
+
+    response = client.post("/api/datasets/search", json={"keyword": "서울 빈집", "page": 2, "per_page": 5})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "success"
+    assert body["query"] == "서울 빈집"
+    assert body["items"][0]["title"] == "서울 빈집"

@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from backend.data_visualizer import IntelligentVisualizerEngine
 from backend.keyword_extractor import analyze_project_idea
+from backend.public_data_portal import fetch_dataset_search
 
 
 ALLOWED_UPLOAD_EXTENSIONS = {".csv", ".xlsx", ".xls"}
@@ -39,6 +40,14 @@ class KeywordRequest(BaseModel):
     """Request body for keyword extraction."""
 
     prompt: str = Field(..., examples=["서울시 빈집 문제를 분석하고 싶어"])
+
+
+class DatasetSearchRequest(BaseModel):
+    """Request body for public-data dataset search."""
+
+    keyword: str = Field(..., examples=["서울 빈집"])
+    page: int = Field(1, ge=1, le=100, examples=[1])
+    per_page: int = Field(10, ge=1, le=50, examples=[10])
 
 
 def _safe_error(status_code: int, message: str, detail: str | None = None) -> HTTPException:
@@ -102,6 +111,24 @@ def extract_keywords(request: KeywordRequest) -> dict[str, str]:
         )
 
     return {"status": "success", "topic": str(topic)}
+
+
+@app.post("/api/datasets/search")
+def search_datasets(request: DatasetSearchRequest) -> dict[str, Any]:
+    """Search public-data dataset candidates by keyword."""
+    keyword = request.keyword.strip()
+    if not keyword:
+        raise _safe_error(
+            status.HTTP_400_BAD_REQUEST,
+            "keyword는 비어 있을 수 없습니다.",
+        )
+
+    result = fetch_dataset_search(keyword, page=request.page, per_page=request.per_page)
+    payload = result.to_dict()
+    if result.status != "success":
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=payload)
+
+    return payload
 
 
 @app.post("/api/visualize")

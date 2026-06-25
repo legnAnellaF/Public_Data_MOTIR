@@ -10,6 +10,12 @@
     isKeywordLoading,
     keywordResult,
     keywordError,
+    isDatasetSearchLoading,
+    datasetSearchResult,
+    datasetSearchError,
+    selectedDataset,
+    onDatasetSearchSubmit,
+    onDatasetSelect,
     selectedDatasetFile,
     isVisualizationLoading,
     visualizationResult,
@@ -63,7 +69,7 @@
     rightColumn.className = "dashboard-column right-column";
 
     leftColumn.append(createOutlinePanel(mainPrompt), createAdditionalPromptPanel());
-    rightColumn.append(createVisualizationPanel(), createCommentPanel(mainPrompt));
+    rightColumn.append(createDatasetSearchPanel(), createVisualizationPanel(), createCommentPanel(mainPrompt));
     layout.append(leftColumn, rightColumn);
     page.append(header, layout);
 
@@ -233,6 +239,175 @@
 
     function createAdditionalPromptReply(prompt) {
       return `추가 요청 "${prompt}"을(를) 세션에 저장했습니다. 실제 데이터 재분석 응답은 추후 백엔드 API 연결 후 제공됩니다.`;
+    }
+
+    function createDatasetSearchPanel() {
+      const wrapper = document.createElement("div");
+      wrapper.className = "dataset-search-section";
+
+      const intro = document.createElement("p");
+      intro.className = "muted-text compact";
+      intro.textContent = "키워드 기반 공공데이터포털 데이터셋 후보를 검색합니다. 이번 단계에서는 후보 표시와 선택만 지원합니다.";
+
+      const form = document.createElement("form");
+      form.className = "dataset-search-form";
+
+      const input = document.createElement("input");
+      input.type = "search";
+      input.value = getDatasetSearchQuery();
+      input.placeholder = "예: 서울 빈집";
+      input.setAttribute("aria-label", "공공데이터 검색 키워드");
+
+      const button = document.createElement("button");
+      button.type = "submit";
+      button.className = "primary-button";
+      button.textContent = isDatasetSearchLoading ? "검색 중..." : "후보 검색";
+      button.disabled = isDatasetSearchLoading;
+
+      form.append(input, button);
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        onDatasetSearchSubmit(input.value);
+      });
+
+      wrapper.append(intro, form, createDatasetSearchResultBlock());
+
+      return window.PublicDataDashboard.Panel({
+        title: "공공데이터 후보",
+        children: wrapper,
+        className: "dataset-search-panel",
+      });
+    }
+
+    function getDatasetSearchQuery() {
+      if (datasetSearchResult && typeof datasetSearchResult.query === "string") {
+        return datasetSearchResult.query;
+      }
+
+      const keywordText = formatKeywordResult(keywordResult);
+      return keywordText || mainPrompt || "";
+    }
+
+    function createDatasetSearchResultBlock() {
+      const resultBox = document.createElement("div");
+      resultBox.className = "dataset-search-results";
+      resultBox.setAttribute("aria-live", "polite");
+
+      if (isDatasetSearchLoading) {
+        resultBox.appendChild(createDatasetStatus("loading", "공공데이터 후보를 검색 중입니다..."));
+        return resultBox;
+      }
+
+      if (datasetSearchError) {
+        resultBox.appendChild(createDatasetStatus("error", `공공데이터 후보 검색 실패: ${datasetSearchError}`));
+        return resultBox;
+      }
+
+      const items = datasetSearchResult && Array.isArray(datasetSearchResult.items)
+        ? datasetSearchResult.items
+        : [];
+
+      if (!datasetSearchResult) {
+        resultBox.appendChild(createDatasetStatus("empty", "키워드 추출 후 자동 검색을 시도하거나 직접 검색어를 입력해 후보를 확인할 수 있습니다."));
+        return resultBox;
+      }
+
+      if (!items.length) {
+        resultBox.appendChild(createDatasetStatus("empty", "검색된 공공데이터 후보가 없습니다. 다른 키워드로 다시 검색해 보세요."));
+        return resultBox;
+      }
+
+      const list = document.createElement("div");
+      list.className = "dataset-candidate-list";
+      items.forEach((item) => list.appendChild(createDatasetCandidateCard(item)));
+      resultBox.appendChild(list);
+
+      if (selectedDataset) {
+        const notice = document.createElement("p");
+        notice.className = "selected-dataset-notice";
+        notice.textContent = "선택한 데이터셋의 실제 다운로드/시각화 연결은 후속 작업입니다.";
+        resultBox.appendChild(notice);
+      }
+
+      return resultBox;
+    }
+
+    function createDatasetStatus(type, text) {
+      const message = document.createElement("p");
+      message.className = `dataset-search-status ${type}`;
+      message.textContent = text;
+      return message;
+    }
+
+    function createDatasetCandidateCard(item) {
+      const dataset = item && typeof item === "object" ? item : {};
+      const isSelected = isSameDataset(dataset, selectedDataset);
+      const card = document.createElement("article");
+      card.className = `dataset-candidate-card ${isSelected ? "selected" : ""}`.trim();
+
+      const header = document.createElement("div");
+      header.className = "dataset-card-header";
+      const title = document.createElement("h3");
+      title.textContent = dataset.title || "제목 없는 데이터셋";
+      const format = document.createElement("span");
+      format.className = "dataset-format-badge";
+      format.textContent = dataset.format || "형식 미정";
+      header.append(title, format);
+
+      const description = document.createElement("p");
+      description.className = "dataset-description";
+      description.textContent = summarizeText(dataset.description || "설명이 제공되지 않았습니다.", 150);
+
+      const meta = document.createElement("dl");
+      meta.className = "dataset-meta-grid";
+      appendDatasetMeta(meta, "제공기관", dataset.provider || "미상");
+      appendDatasetMeta(meta, "분류", dataset.category || "미분류");
+      appendDatasetMeta(meta, "업데이트", dataset.updated_at || "날짜 없음");
+
+      const actions = document.createElement("div");
+      actions.className = "dataset-card-actions";
+      if (dataset.url) {
+        const link = document.createElement("a");
+        link.className = "dataset-detail-link";
+        link.href = dataset.url;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = "상세 보기";
+        actions.appendChild(link);
+      }
+
+      const selectButton = document.createElement("button");
+      selectButton.type = "button";
+      selectButton.className = isSelected ? "primary-button" : "ghost-button";
+      selectButton.textContent = isSelected ? "선택됨" : "선택";
+      selectButton.addEventListener("click", () => onDatasetSelect(dataset));
+      actions.appendChild(selectButton);
+
+      card.append(header, description, meta, actions);
+      return card;
+    }
+
+    function appendDatasetMeta(parent, labelText, valueText) {
+      const label = document.createElement("dt");
+      label.textContent = labelText;
+      const value = document.createElement("dd");
+      value.textContent = valueText;
+      parent.append(label, value);
+    }
+
+    function summarizeText(value, maxLength) {
+      const text = String(value || "").replace(/\s+/g, " ").trim();
+      return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
+    }
+
+    function isSameDataset(left, right) {
+      if (!left || !right) {
+        return false;
+      }
+      if (left.id && right.id) {
+        return left.id === right.id;
+      }
+      return left.title === right.title && left.url === right.url;
     }
 
     function createVisualizationPanel() {

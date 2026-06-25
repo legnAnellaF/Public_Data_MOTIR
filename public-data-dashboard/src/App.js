@@ -199,6 +199,10 @@
     isKeywordLoading: false,
     keywordResult: null,
     keywordError: "",
+    isDatasetSearchLoading: false,
+    datasetSearchResult: null,
+    datasetSearchError: "",
+    selectedDataset: null,
     selectedDatasetFile: null,
     isVisualizationLoading: false,
     visualizationResult: null,
@@ -243,6 +247,10 @@
       isKeywordLoading: false,
       keywordResult: null,
       keywordError: "",
+      isDatasetSearchLoading: false,
+      datasetSearchResult: null,
+      datasetSearchError: "",
+      selectedDataset: null,
       selectedDatasetFile: null,
       isVisualizationLoading: false,
       visualizationResult: null,
@@ -289,6 +297,10 @@
       isKeywordLoading: false,
       keywordResult: null,
       keywordError: "",
+      isDatasetSearchLoading: false,
+      datasetSearchResult: null,
+      datasetSearchError: "",
+      selectedDataset: null,
       selectedDatasetFile: null,
       isVisualizationLoading: false,
       visualizationResult: null,
@@ -316,6 +328,10 @@
       isKeywordLoading: false,
       keywordResult: null,
       keywordError: "",
+      isDatasetSearchLoading: false,
+      datasetSearchResult: null,
+      datasetSearchError: "",
+      selectedDataset: null,
       selectedDatasetFile: null,
       isVisualizationLoading: false,
       visualizationResult: null,
@@ -346,6 +362,8 @@
           keywordResult: result,
           keywordError: "",
         });
+
+        requestDatasetSearch(getKeywordText(result) || requestedPrompt);
       })
       .catch((error) => {
         if (state.mainPrompt !== requestedPrompt || state.currentView !== "dashboard") {
@@ -359,6 +377,8 @@
             ? error.message
             : "백엔드 API 연결 실패 또는 키워드 추출 실패",
         });
+
+        requestDatasetSearch(requestedPrompt);
       });
   }
 
@@ -380,6 +400,10 @@
       isKeywordLoading: true,
       keywordResult: null,
       keywordError: "",
+      isDatasetSearchLoading: false,
+      datasetSearchResult: null,
+      datasetSearchError: "",
+      selectedDataset: null,
       selectedDatasetFile: null,
       isVisualizationLoading: false,
       visualizationResult: null,
@@ -400,6 +424,10 @@
       isKeywordLoading: true,
       keywordResult: null,
       keywordError: "",
+      isDatasetSearchLoading: false,
+      datasetSearchResult: null,
+      datasetSearchError: "",
+      selectedDataset: null,
       selectedDatasetFile: null,
       isVisualizationLoading: false,
       visualizationResult: null,
@@ -450,9 +478,7 @@
     });
   }
 
-  function getCoreKeyword() {
-    const result = state.keywordResult;
-
+  function getKeywordText(result) {
     if (!result || typeof result !== "object") {
       return "";
     }
@@ -466,6 +492,77 @@
     }
 
     return "";
+  }
+
+  function requestDatasetSearch(keyword, options) {
+    const trimmedKeyword = (keyword || "").trim();
+    if (!trimmedKeyword) {
+      setState({
+        isDatasetSearchLoading: false,
+        datasetSearchResult: null,
+        datasetSearchError: "검색할 키워드를 입력해 주세요.",
+        selectedDataset: null,
+      });
+      return;
+    }
+
+    if (!window.PublicDataDashboard.Api || !window.PublicDataDashboard.Api.searchDatasets) {
+      setState({
+        isDatasetSearchLoading: false,
+        datasetSearchResult: null,
+        datasetSearchError: "공공데이터 검색 API 클라이언트를 불러오지 못했습니다.",
+        selectedDataset: null,
+      });
+      return;
+    }
+
+    const requestedKeyword = trimmedKeyword;
+    setState({
+      isDatasetSearchLoading: true,
+      datasetSearchResult: null,
+      datasetSearchError: "",
+      selectedDataset: null,
+    });
+
+    window.PublicDataDashboard.Api.searchDatasets(requestedKeyword, options || { page: 1, perPage: 10 })
+      .then((result) => {
+        if (state.currentView !== "dashboard" || requestedKeyword !== (result && result.query ? result.query : requestedKeyword)) {
+          return;
+        }
+
+        setState({
+          isDatasetSearchLoading: false,
+          datasetSearchResult: result,
+          datasetSearchError: "",
+          selectedDataset: null,
+        });
+      })
+      .catch((error) => {
+        if (state.currentView !== "dashboard") {
+          return;
+        }
+
+        setState({
+          isDatasetSearchLoading: false,
+          datasetSearchResult: null,
+          datasetSearchError: error && error.message
+            ? error.message
+            : "공공데이터 후보 검색에 실패했습니다.",
+          selectedDataset: null,
+        });
+      });
+  }
+
+  function handleDatasetSearchSubmit(keyword) {
+    requestDatasetSearch(keyword || getCoreKeyword() || state.mainPrompt);
+  }
+
+  function handleDatasetSelect(dataset) {
+    setState({ selectedDataset: dataset || null });
+  }
+
+  function getCoreKeyword() {
+    return getKeywordText(state.keywordResult);
   }
 
   function handleDatasetFileChange(file) {
@@ -570,6 +667,12 @@
         isKeywordLoading: state.isKeywordLoading,
         keywordResult: state.keywordResult,
         keywordError: state.keywordError,
+        isDatasetSearchLoading: state.isDatasetSearchLoading,
+        datasetSearchResult: state.datasetSearchResult,
+        datasetSearchError: state.datasetSearchError,
+        selectedDataset: state.selectedDataset,
+        onDatasetSearchSubmit: handleDatasetSearchSubmit,
+        onDatasetSelect: handleDatasetSelect,
         selectedDatasetFile: state.selectedDatasetFile,
         isVisualizationLoading: state.isVisualizationLoading,
         visualizationResult: state.visualizationResult,
@@ -582,6 +685,10 @@
           isKeywordLoading: false,
           keywordResult: null,
           keywordError: "",
+          isDatasetSearchLoading: false,
+          datasetSearchResult: null,
+          datasetSearchError: "",
+          selectedDataset: null,
           selectedDatasetFile: null,
           isVisualizationLoading: false,
           visualizationResult: null,

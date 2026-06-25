@@ -113,6 +113,23 @@
     });
   }
 
+  function searchDatasets(keyword, options) {
+    const searchOptions = options || {};
+
+    return requestJson("/api/datasets/search", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        keyword,
+        page: searchOptions.page || 1,
+        per_page: searchOptions.perPage || searchOptions.per_page || 10,
+      }),
+      fallbackMessage: "공공데이터 후보 검색에 실패했습니다.",
+    });
+  }
+
   function visualizeDataset(file, query, coreKeyword) {
     const formData = new FormData();
     formData.append("file", file);
@@ -132,6 +149,7 @@
     getApiBaseUrl,
     checkApiHealth,
     extractKeywords,
+    searchDatasets,
     visualizeDataset,
   };
 })();

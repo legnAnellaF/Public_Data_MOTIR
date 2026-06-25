@@ -11,6 +11,7 @@
 │   ├── app.py                  # FastAPI 백엔드 API skeleton
 │   ├── data_visualizer.py      # CSV/Excel 데이터를 분석해 차트용 구조화 데이터 생성
 │   ├── keyword_extractor.py    # 사용자 문장에서 공공데이터 검색 키워드 추출
+│   ├── public_data_portal.py   # 공공데이터포털 데이터셋 검색 client/응답 정규화
 │   └── requirements.txt        # 백엔드/API/분석 모듈 의존성
 ├── public-data-dashboard/
 │   ├── index.html
@@ -34,7 +35,7 @@
 - 기존 `public-data-dashboard`와 `public-data-dashboard-vercel`처럼 역할이 겹치는 구조는 하나의 최종 프론트엔드 폴더로 통일하는 방향으로 정리합니다.
 - 기존 `public-data-keyword` 스크립트는 `backend/keyword_extractor.py`로 옮겨 import 가능한 Python 모듈로 정리했습니다.
 - 기존 루트의 `data_visualizer.py`는 `backend/data_visualizer.py`로 옮겨 import 가능한 Python 모듈로 정리했습니다.
-- 정적 프론트엔드는 `public-data-dashboard/src/api.js`의 최소 `fetch` 클라이언트로 FastAPI 백엔드의 `/api/keywords`와 `/api/visualize`를 호출합니다. `/api/visualize`는 대시보드 파일 업로드 UI와 연결되어 CSV/Excel 분석 결과를 표시합니다. 공공데이터포털 실제 API 연동과 실제 인증 연동은 추가하지 않습니다.
+- 정적 프론트엔드는 `public-data-dashboard/src/api.js`의 최소 `fetch` 클라이언트로 FastAPI 백엔드의 `/api/keywords`와 `/api/visualize`를 호출합니다. `/api/visualize`는 대시보드 파일 업로드 UI와 연결되어 CSV/Excel 분석 결과를 표시합니다. 공공데이터포털 데이터셋 검색 후보 목록은 `/api/datasets/search`로 1차 연동했으며, 선택한 데이터셋의 실제 다운로드/자동 시각화와 실제 인증 연동은 추가하지 않습니다.
 
 ## 로컬 실행 방법
 
@@ -76,6 +77,16 @@ localStorage.removeItem("PUBLIC_DATA_API_BASE_URL");
 서울,1000,10
 부산,700,7
 대구,500,5
+```
+
+
+대시보드의 “공공데이터 후보” 섹션은 키워드 추출 성공 시 추출 topic으로 `/api/datasets/search`를 자동 호출하고, 실패 시 원래 프롬프트 또는 수동 검색어로 후보 검색을 시도합니다. 현재 범위는 후보 목록 표시와 선택 상태 표시까지입니다. 선택한 데이터셋을 실제 CSV/API로 다운로드하거나 `/api/visualize`에 자동 연결하는 기능은 후속 PR에서 구현합니다.
+
+공공데이터포털 검색 API를 사용하려면 로컬 `.env` 또는 배포 환경 변수에 다음 값을 설정합니다. 실제 키는 절대 커밋하지 않습니다. `PUBLIC_DATA_PORTAL_BASE_URL`은 공공데이터포털의 실제 데이터셋 검색 endpoint가 확정되면 해당 URL로 덮어씁니다.
+
+```bash
+PUBLIC_DATA_API_KEY=your-public-data-api-key
+PUBLIC_DATA_PORTAL_BASE_URL=https://api.odcloud.kr/api
 ```
 
 실제 배포 사이트에서 `/api/visualize`를 확인하려면 백엔드 배포가 먼저 완료되어야 하며, 배포된 정적 프론트엔드에 올바른 API base URL 설정이 적용되어 있어야 합니다.
@@ -189,6 +200,44 @@ curl -X POST http://localhost:8000/api/keywords \
   }
 }
 ```
+
+
+### `POST /api/datasets/search`
+
+공공데이터포털 데이터셋 후보를 키워드로 검색하고 프론트엔드가 바로 표시하기 쉬운 정규화 구조를 반환합니다. 실제 포털 endpoint가 환경마다 다를 수 있어 `backend/public_data_portal.py`는 `PUBLIC_DATA_PORTAL_BASE_URL`과 `PUBLIC_DATA_API_KEY`를 사용하도록 만들었고, 응답 정규화는 fixture/mock 테스트로 검증합니다. 키가 없거나 외부 API 호출에 실패하면 실제 키 값을 노출하지 않는 안전한 오류를 반환합니다.
+
+요청 예시:
+
+```bash
+curl -X POST http://localhost:8000/api/datasets/search \
+  -H "Content-Type: application/json" \
+  -d '{"keyword":"서울 빈집","page":1,"per_page":10}'
+```
+
+성공 응답 예시:
+
+```json
+{
+  "status": "success",
+  "query": "서울 빈집",
+  "items": [
+    {
+      "id": "string-or-null",
+      "title": "데이터셋 제목",
+      "description": "설명",
+      "provider": "제공기관",
+      "category": "분류",
+      "format": "CSV/API/JSON 등",
+      "updated_at": "날짜 또는 null",
+      "url": "상세 페이지 또는 API 링크",
+      "raw": {}
+    }
+  ],
+  "message": ""
+}
+```
+
+`keyword`가 비어 있으면 400을 반환합니다. `PUBLIC_DATA_API_KEY`가 없거나 외부 호출이 실패하면 503과 안전한 JSON 오류를 반환합니다. 이번 구현은 검색 후보 목록 표시까지이며, 선택 데이터셋의 실제 다운로드와 `/api/visualize` 자동 연결은 후속 작업입니다.
 
 ### `POST /api/visualize`
 
