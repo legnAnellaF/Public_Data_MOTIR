@@ -10,6 +10,12 @@
     isKeywordLoading,
     keywordResult,
     keywordError,
+    selectedDatasetFile,
+    isVisualizationLoading,
+    visualizationResult,
+    visualizationError,
+    onDatasetFileChange,
+    onVisualizationSubmit,
     onNewPrompt,
     onLogout,
   }) {
@@ -230,33 +236,298 @@
     }
 
     function createVisualizationPanel() {
-      const chart = document.createElement("div");
-      chart.className = "chart-placeholder";
+      const wrapper = document.createElement("div");
+      wrapper.className = "visualization-workspace";
 
-      const chartBars = document.createElement("div");
-      chartBars.className = "chart-bars";
+      const uploadBox = document.createElement("div");
+      uploadBox.className = "dataset-upload-box";
 
-      [42, 68, 52, 86, 61, 74].forEach((height) => {
-        const bar = document.createElement("span");
-        bar.style.height = `${height}%`;
-        chartBars.appendChild(bar);
+      const uploadCopy = document.createElement("div");
+      uploadCopy.className = "dataset-upload-copy";
+
+      const uploadTitle = document.createElement("p");
+      uploadTitle.textContent = "분석할 데이터 파일 업로드";
+
+      const uploadHint = document.createElement("span");
+      uploadHint.textContent = "지원 형식: .csv, .xlsx, .xls";
+
+      uploadCopy.append(uploadTitle, uploadHint);
+
+      const fileLabel = document.createElement("label");
+      fileLabel.className = "dataset-file-label";
+      fileLabel.setAttribute("for", "dataset-file-input");
+      fileLabel.textContent = "파일 선택";
+
+      const fileInput = document.createElement("input");
+      fileInput.id = "dataset-file-input";
+      fileInput.type = "file";
+      fileInput.accept = ".csv,.xlsx,.xls";
+      fileInput.className = "sr-only";
+      fileInput.addEventListener("change", () => {
+        const file = fileInput.files && fileInput.files.length > 0 ? fileInput.files[0] : null;
+        onDatasetFileChange(file);
       });
 
-      const chartCopy = document.createElement("div");
-      chartCopy.className = "placeholder-copy";
-      chartCopy.innerHTML = `
-        <p>추후 공공데이터 기반 그래프가 이 영역에 표시됩니다.</p>
-        <span>막대그래프, 선그래프, 표, 지도 등 시각자료 출력 예정</span>
-        <span>/api/visualize 연동 함수는 준비되어 있으며 파일 업로드 UI와 차트 렌더링은 후속 작업입니다.</span>
-      `;
+      const selectedFileText = document.createElement("p");
+      selectedFileText.className = `selected-file-name ${selectedDatasetFile ? "" : "empty"}`.trim();
+      selectedFileText.textContent = selectedDatasetFile
+        ? `선택된 파일: ${selectedDatasetFile.name}`
+        : "선택된 파일이 없습니다. CSV/XLSX/XLS 파일을 선택해 주세요.";
 
-      chart.append(chartBars, chartCopy);
+      const runButton = document.createElement("button");
+      runButton.className = "primary-button visualization-run-button";
+      runButton.type = "button";
+      runButton.textContent = isVisualizationLoading ? "분석 중..." : "시각화 실행";
+      runButton.disabled = !selectedDatasetFile || isVisualizationLoading;
+      runButton.addEventListener("click", onVisualizationSubmit);
+
+      uploadBox.append(uploadCopy, fileLabel, fileInput, selectedFileText, runButton);
+      wrapper.append(uploadBox, createVisualizationResultBlock());
 
       return window.PublicDataDashboard.Panel({
         title: createVisualizationTitle(mainPrompt, additionalPrompts),
-        children: chart,
+        children: wrapper,
         className: "visual-panel",
       });
+    }
+
+    function createVisualizationResultBlock() {
+      const resultBox = document.createElement("div");
+      resultBox.className = "visualization-result";
+      resultBox.setAttribute("aria-live", "polite");
+
+      if (isVisualizationLoading) {
+        const message = document.createElement("p");
+        message.className = "visualization-status loading";
+        message.textContent = "데이터 시각화 분석 중...";
+        resultBox.appendChild(message);
+        return resultBox;
+      }
+
+      if (visualizationError) {
+        const message = document.createElement("p");
+        message.className = "visualization-status error";
+        message.textContent = `데이터 시각화 실패: ${visualizationError}`;
+        resultBox.appendChild(message);
+        return resultBox;
+      }
+
+      if (!visualizationResult) {
+        const empty = document.createElement("div");
+        empty.className = "visualization-empty";
+        empty.innerHTML = `
+          <p>파일을 업로드하면 /api/visualize 분석 결과가 이 영역에 표시됩니다.</p>
+          <span>외부 차트 라이브러리 없이 Vanilla JS와 CSS로 간단한 그래프/표를 렌더링합니다.</span>
+        `;
+        resultBox.appendChild(empty);
+        return resultBox;
+      }
+
+      resultBox.append(
+        createResultSummary(visualizationResult),
+        createChartPreview(visualizationResult),
+        createDatasetList(visualizationResult.datasets),
+        createLabelList(visualizationResult.labels),
+        createResultTable(visualizationResult.table_data),
+        createPrecautionList(visualizationResult.startup_precautions)
+      );
+      return resultBox;
+    }
+
+    function createResultSummary(result) {
+      const summary = document.createElement("div");
+      summary.className = "visualization-card result-summary-card";
+      summary.append(
+        createMetaItem("차트 제목", result.chart_title || "제목 없음"),
+        createMetaItem("차트 유형", result.chart_type || "유형 미정"),
+        createMetaItem("선택 이유", result.strategy_reason || "시각화 전략 설명이 없습니다.")
+      );
+      return summary;
+    }
+
+    function createMetaItem(labelText, valueText) {
+      const item = document.createElement("div");
+      item.className = "result-meta-item";
+      const label = document.createElement("span");
+      label.textContent = labelText;
+      const value = document.createElement("p");
+      value.textContent = valueText;
+      item.append(label, value);
+      return item;
+    }
+
+    function createChartPreview(result) {
+      const card = document.createElement("div");
+      card.className = "visualization-card";
+      const title = document.createElement("h3");
+      title.textContent = "간단 시각화";
+      card.appendChild(title);
+
+      const labels = Array.isArray(result.labels) ? result.labels : [];
+      const firstDataset = Array.isArray(result.datasets) ? result.datasets[0] : null;
+      const data = firstDataset && Array.isArray(firstDataset.data) ? firstDataset.data : [];
+
+      if (result.chart_type === "bar" && labels.length && data.length) {
+        card.appendChild(createBarChart(labels, data));
+      } else {
+        const fallback = document.createElement("p");
+        fallback.className = "muted-text compact";
+        fallback.textContent = "line/pie 또는 기타 유형은 현재 요약, 라벨, 데이터셋, 표 중심으로 표시합니다.";
+        card.appendChild(fallback);
+      }
+      return card;
+    }
+
+    function createBarChart(labels, data) {
+      const chart = document.createElement("div");
+      chart.className = "css-bar-chart";
+      const numericValues = data.map((value) => Number(value)).filter((value) => Number.isFinite(value));
+      const maxValue = Math.max(...numericValues, 1);
+
+      labels.slice(0, 12).forEach((label, index) => {
+        const value = Number(data[index]);
+        const safeValue = Number.isFinite(value) ? value : 0;
+        const row = document.createElement("div");
+        row.className = "css-bar-row";
+        const labelEl = document.createElement("span");
+        labelEl.className = "css-bar-label";
+        labelEl.textContent = String(label);
+        const track = document.createElement("div");
+        track.className = "css-bar-track";
+        const bar = document.createElement("span");
+        bar.className = "css-bar-fill";
+        bar.style.width = `${Math.max(4, (safeValue / maxValue) * 100)}%`;
+        const valueEl = document.createElement("span");
+        valueEl.className = "css-bar-value";
+        valueEl.textContent = String(data[index]);
+        track.append(bar, valueEl);
+        row.append(labelEl, track);
+        chart.appendChild(row);
+      });
+
+      if (labels.length > 12) {
+        const note = document.createElement("p");
+        note.className = "partial-note";
+        note.textContent = `막대그래프는 처음 12개 항목만 표시합니다. 전체 라벨 수: ${labels.length}개`;
+        chart.appendChild(note);
+      }
+      return chart;
+    }
+
+    function createDatasetList(datasets) {
+      const card = document.createElement("div");
+      card.className = "visualization-card";
+      const title = document.createElement("h3");
+      title.textContent = "datasets";
+      const list = document.createElement("ul");
+      list.className = "result-data-list";
+      (Array.isArray(datasets) ? datasets : []).forEach((dataset) => {
+        const item = document.createElement("li");
+        const data = Array.isArray(dataset.data) ? dataset.data : [];
+        item.textContent = `${dataset.label || "데이터셋"}: ${data.slice(0, 12).join(", ")}${data.length > 12 ? " ..." : ""}`;
+        list.appendChild(item);
+      });
+      if (!list.children.length) {
+        const item = document.createElement("li");
+        item.textContent = "표시할 datasets가 없습니다.";
+        list.appendChild(item);
+      }
+      card.append(title, list);
+      return card;
+    }
+
+    function createLabelList(labels) {
+      const card = document.createElement("div");
+      card.className = "visualization-card";
+      const title = document.createElement("h3");
+      title.textContent = "labels";
+      const text = document.createElement("p");
+      const safeLabels = Array.isArray(labels) ? labels : [];
+      text.textContent = safeLabels.length ? safeLabels.slice(0, 20).join(", ") : "표시할 labels가 없습니다.";
+      card.append(title, text);
+      if (safeLabels.length > 20) {
+        const note = document.createElement("p");
+        note.className = "partial-note";
+        note.textContent = `처음 20개 라벨만 표시합니다. 전체 라벨 수: ${safeLabels.length}개`;
+        card.appendChild(note);
+      }
+      return card;
+    }
+
+    function createResultTable(tableData) {
+      const card = document.createElement("div");
+      card.className = "visualization-card table-card";
+      const title = document.createElement("h3");
+      title.textContent = "table_data";
+      card.appendChild(title);
+
+      const headers = tableData && Array.isArray(tableData.headers) ? tableData.headers : [];
+      const rows = tableData && Array.isArray(tableData.rows) ? tableData.rows : [];
+      if (!headers.length || !rows.length) {
+        const empty = document.createElement("p");
+        empty.className = "muted-text compact";
+        empty.textContent = "표시할 table_data.headers 또는 table_data.rows가 없습니다.";
+        card.appendChild(empty);
+        return card;
+      }
+
+      const tableWrapper = document.createElement("div");
+      tableWrapper.className = "result-table-wrapper";
+      const table = document.createElement("table");
+      table.className = "result-table";
+      const thead = document.createElement("thead");
+      const headRow = document.createElement("tr");
+      headers.forEach((headerText) => {
+        const th = document.createElement("th");
+        th.textContent = String(headerText);
+        headRow.appendChild(th);
+      });
+      thead.appendChild(headRow);
+
+      const tbody = document.createElement("tbody");
+      rows.slice(0, 15).forEach((row) => {
+        const tr = document.createElement("tr");
+        const cells = Array.isArray(row) ? row : headers.map((header) => row && row[header]);
+        headers.forEach((_, index) => {
+          const td = document.createElement("td");
+          td.textContent = cells[index] == null ? "" : String(cells[index]);
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+      table.append(thead, tbody);
+      tableWrapper.appendChild(table);
+      card.appendChild(tableWrapper);
+
+      if (rows.length > 15) {
+        const note = document.createElement("p");
+        note.className = "partial-note";
+        note.textContent = `처음 15개 행만 일부만 표시합니다. 전체 행 수: ${rows.length}개`;
+        card.appendChild(note);
+      }
+      return card;
+    }
+
+    function createPrecautionList(precautions) {
+      const card = document.createElement("div");
+      card.className = "visualization-card";
+      const title = document.createElement("h3");
+      title.textContent = "startup_precautions";
+      const list = document.createElement("ul");
+      list.className = "precaution-list";
+      const items = Array.isArray(precautions) ? precautions : [];
+      items.forEach((precaution) => {
+        const li = document.createElement("li");
+        li.textContent = String(precaution);
+        list.appendChild(li);
+      });
+      if (!items.length) {
+        const li = document.createElement("li");
+        li.textContent = "표시할 창업 유의사항이 없습니다.";
+        list.appendChild(li);
+      }
+      card.append(title, list);
+      return card;
     }
 
     function createVisualizationTitle(prompt, prompts) {

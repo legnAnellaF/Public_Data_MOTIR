@@ -875,3 +875,243 @@ textarea:focus {
 .keyword-bubble.keyword-error {
   border-left-color: var(--danger);
 }
+
+.visualization-workspace {
+  display: grid;
+  gap: 16px;
+}
+
+.dataset-upload-box,
+.visualization-card,
+.visualization-empty,
+.visualization-status {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-subtle);
+}
+
+.dataset-upload-box {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto minmax(160px, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+}
+
+.dataset-upload-copy p,
+.selected-file-name,
+.visualization-card p,
+.visualization-empty p,
+.visualization-status {
+  margin: 0;
+}
+
+.dataset-upload-copy p {
+  font-weight: 850;
+}
+
+.dataset-upload-copy span,
+.selected-file-name,
+.partial-note {
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.dataset-file-label {
+  display: inline-grid;
+  min-height: 42px;
+  place-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 850;
+  padding: 0 14px;
+  cursor: pointer;
+}
+
+.dataset-file-label:hover {
+  background: var(--accent-soft);
+  border-color: rgba(37, 99, 235, 0.34);
+}
+
+.selected-file-name.empty {
+  color: var(--amber);
+}
+
+.visualization-run-button {
+  min-width: 126px;
+  padding: 0 16px;
+}
+
+.visualization-result {
+  display: grid;
+  gap: 14px;
+}
+
+.visualization-status {
+  padding: 14px;
+  font-weight: 800;
+  line-height: 1.5;
+}
+
+.visualization-status.loading {
+  border-color: rgba(37, 99, 235, 0.22);
+  background: var(--accent-soft);
+  color: var(--accent-hover);
+}
+
+.visualization-status.error {
+  border-color: rgba(220, 38, 38, 0.22);
+  background: #fff1f2;
+  color: var(--danger);
+}
+
+.visualization-empty {
+  display: grid;
+  gap: 8px;
+  padding: 18px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.visualization-empty p {
+  color: var(--text);
+  font-weight: 850;
+}
+
+.visualization-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.visualization-card h3 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-weight: 900;
+}
+
+.result-summary-card {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.result-meta-item {
+  display: grid;
+  gap: 6px;
+}
+
+.result-meta-item span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.result-meta-item p {
+  line-height: 1.5;
+}
+
+.css-bar-chart {
+  display: grid;
+  gap: 10px;
+}
+
+.css-bar-row {
+  display: grid;
+  grid-template-columns: minmax(72px, 0.26fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.css-bar-label {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.css-bar-track {
+  position: relative;
+  min-height: 30px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #eef2ff;
+}
+
+.css-bar-fill {
+  display: block;
+  height: 100%;
+  min-height: 30px;
+  border-radius: 8px;
+  background: linear-gradient(90deg, var(--accent), var(--teal));
+}
+
+.css-bar-value {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  transform: translateY(-50%);
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 850;
+}
+
+.result-data-list,
+.precaution-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 20px;
+  line-height: 1.5;
+}
+
+.result-table-wrapper {
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.result-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 420px;
+  background: var(--surface);
+}
+
+.result-table th,
+.result-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.result-table th {
+  background: var(--surface-subtle);
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.result-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.muted-text.compact {
+  margin: 0;
+}
+
+@media (max-width: 1180px) {
+  .dataset-upload-box,
+  .result-summary-card {
+    grid-template-columns: 1fr;
+  }
+
+  .visualization-run-button {
+    width: 100%;
+  }
+}
