@@ -34,7 +34,7 @@
 - 기존 `public-data-dashboard`와 `public-data-dashboard-vercel`처럼 역할이 겹치는 구조는 하나의 최종 프론트엔드 폴더로 통일하는 방향으로 정리합니다.
 - 기존 `public-data-keyword` 스크립트는 `backend/keyword_extractor.py`로 옮겨 import 가능한 Python 모듈로 정리했습니다.
 - 기존 루트의 `data_visualizer.py`는 `backend/data_visualizer.py`로 옮겨 import 가능한 Python 모듈로 정리했습니다.
-- 정적 프론트엔드는 `public-data-dashboard/src/api.js`의 최소 `fetch` 클라이언트로 FastAPI 백엔드의 `/api/keywords`를 호출합니다. 공공데이터포털 실제 API 연동과 실제 인증 연동은 추가하지 않습니다.
+- 정적 프론트엔드는 `public-data-dashboard/src/api.js`의 최소 `fetch` 클라이언트로 FastAPI 백엔드의 `/api/keywords`와 `/api/visualize`를 호출합니다. `/api/visualize`는 대시보드 파일 업로드 UI와 연결되어 CSV/Excel 분석 결과를 표시합니다. 공공데이터포털 실제 API 연동과 실제 인증 연동은 추가하지 않습니다.
 
 ## 로컬 실행 방법
 
@@ -55,7 +55,7 @@ python -m http.server 5173
 
 브라우저에서 `http://localhost:5173`에 접속합니다. 프론트엔드 API 기본 주소는 `http://localhost:8000`이며, 배포/개발 환경에서는 `window.PUBLIC_DATA_API_BASE_URL` 또는 브라우저 `localStorage`의 `PUBLIC_DATA_API_BASE_URL` 값으로 덮어쓸 수 있습니다. 백엔드가 꺼져 있으면 대시보드 placeholder UI와 데모 로그인은 계속 동작하지만 키워드 API 결과 영역에는 연결/추출 실패 메시지가 표시될 수 있습니다.
 
-`/api/visualize`는 `public-data-dashboard/src/api.js`에 `visualizeDataset(file, query, coreKeyword)` 함수만 준비되어 있으며, 파일 업로드 UI와 차트 렌더링은 후속 작업입니다.
+대시보드의 시각화 패널에서 `.csv`, `.xlsx`, `.xls` 파일을 선택한 뒤 **시각화 실행**을 누르면 `visualizeDataset(file, query, coreKeyword)`가 `/api/visualize`를 호출합니다. 응답의 `chart_title`, `chart_type`, `strategy_reason`, `labels`, `datasets`, `table_data`, `startup_precautions`를 Vanilla JS/HTML/CSS로 표시하며, Chart.js/React/Vite 또는 추가 npm 패키지는 사용하지 않습니다. `bar` 결과는 CSS 기반 간단 막대그래프로도 미리 보여주고, `line`/`pie` 등은 요약/목록/표 중심으로 표시합니다. 백엔드가 꺼져 있거나 분석에 실패해도 대시보드 전체가 깨지지 않고 시각화 영역에만 오류가 표시됩니다.
 
 ### 1. 프론트엔드 대시보드 실행
 
@@ -94,6 +94,17 @@ uvicorn backend.app:app --reload --port 8000
 ```
 
 브라우저 또는 HTTP 클라이언트에서 `http://localhost:8000/docs`로 Swagger 문서를 확인할 수 있습니다.
+
+
+### `/api/visualize` 프론트엔드 연결 테스트
+
+1. 백엔드와 정적 프론트엔드를 각각 실행합니다.
+2. 브라우저에서 `http://localhost:5173`에 접속해 데모 계정으로 회원가입/로그인합니다.
+3. 메인 프롬프트를 제출해 대시보드로 이동합니다.
+4. 시각화 패널에서 `.csv`, `.xlsx`, `.xls` 파일을 선택하고 **시각화 실행**을 누릅니다.
+5. 성공 시 차트 제목/유형/전략 이유, 라벨, 데이터셋, 일부 표 행, 창업 유의사항이 표시되는지 확인합니다.
+
+> 현재 표시는 Vanilla JS와 CSS 기반의 간단한 대시보드 표시입니다. Chart.js, React, Vite 같은 프론트엔드 빌드 체계나 차트 라이브러리는 도입하지 않았으며, 공공데이터포털 실제 API 검색/수집 연동은 후속 작업입니다.
 
 ### 3. Vercel 배포 초안
 
@@ -192,7 +203,7 @@ curl -X POST http://localhost:8000/api/visualize \
 }
 ```
 
-허용 확장자는 `.csv`, `.xlsx`, `.xls`입니다.
+허용 확장자는 `.csv`, `.xlsx`, `.xls`입니다. 프론트엔드에서도 동일한 확장자만 선택하도록 안내하며, 결과 표는 데이터가 많을 수 있어 처음 일부 행만 표시합니다.
 
 ## 키워드 추출 모듈 직접 실행
 
@@ -233,7 +244,7 @@ GitHub Actions의 `CI` workflow는 `main` 브랜치 push와 `main` 대상 pull r
 
 ## TODO / 남은 작업
 
-- `/api/visualize` 파일 업로드 UI와 차트 렌더링 구현
+- `/api/visualize` 고급 차트 렌더링 및 대용량 데이터 UX 개선
 - 공공데이터포털 실제 API 연동
 - 실제 인증 방식 도입 및 localStorage 데모 회원가입/로그인 제거
 - 운영 배포 시 허용할 정확한 CORS origin 설정

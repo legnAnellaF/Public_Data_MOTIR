@@ -199,6 +199,10 @@
     isKeywordLoading: false,
     keywordResult: null,
     keywordError: "",
+    selectedDatasetFile: null,
+    isVisualizationLoading: false,
+    visualizationResult: null,
+    visualizationError: "",
   };
 
   if (storedCurrentUser && !hasStoredUser) {
@@ -239,6 +243,10 @@
       isKeywordLoading: false,
       keywordResult: null,
       keywordError: "",
+      selectedDatasetFile: null,
+      isVisualizationLoading: false,
+      visualizationResult: null,
+      visualizationError: "",
     });
 
     return {
@@ -281,6 +289,10 @@
       isKeywordLoading: false,
       keywordResult: null,
       keywordError: "",
+      selectedDatasetFile: null,
+      isVisualizationLoading: false,
+      visualizationResult: null,
+      visualizationError: "",
     });
   }
 
@@ -304,6 +316,10 @@
       isKeywordLoading: false,
       keywordResult: null,
       keywordError: "",
+      selectedDatasetFile: null,
+      isVisualizationLoading: false,
+      visualizationResult: null,
+      visualizationError: "",
     });
   }
 
@@ -364,6 +380,10 @@
       isKeywordLoading: true,
       keywordResult: null,
       keywordError: "",
+      selectedDatasetFile: null,
+      isVisualizationLoading: false,
+      visualizationResult: null,
+      visualizationError: "",
     });
 
     requestKeywordExtraction(trimmedPrompt);
@@ -380,6 +400,10 @@
       isKeywordLoading: true,
       keywordResult: null,
       keywordError: "",
+      selectedDatasetFile: null,
+      isVisualizationLoading: false,
+      visualizationResult: null,
+      visualizationError: "",
     });
 
     requestKeywordExtraction(prompt);
@@ -426,6 +450,86 @@
     });
   }
 
+  function getCoreKeyword() {
+    const result = state.keywordResult;
+
+    if (!result || typeof result !== "object") {
+      return "";
+    }
+
+    if (typeof result.topic === "string") {
+      return result.topic.trim();
+    }
+
+    if (Array.isArray(result.keywords)) {
+      return result.keywords.filter(Boolean).join(" ").trim();
+    }
+
+    return "";
+  }
+
+  function handleDatasetFileChange(file) {
+    setState({
+      selectedDatasetFile: file || null,
+      isVisualizationLoading: false,
+      visualizationResult: null,
+      visualizationError: "",
+    });
+  }
+
+  function handleVisualizationSubmit() {
+    const file = state.selectedDatasetFile;
+
+    if (!file) {
+      setState({ visualizationError: "CSV/XLSX/XLS 파일을 먼저 선택해 주세요." });
+      return;
+    }
+
+    if (!window.PublicDataDashboard.Api) {
+      setState({
+        isVisualizationLoading: false,
+        visualizationResult: null,
+        visualizationError: "백엔드 API 클라이언트를 불러오지 못했습니다.",
+      });
+      return;
+    }
+
+    const requestedFile = file;
+    const requestedPrompt = state.mainPrompt;
+
+    setState({
+      isVisualizationLoading: true,
+      visualizationResult: null,
+      visualizationError: "",
+    });
+
+    window.PublicDataDashboard.Api.visualizeDataset(file, requestedPrompt, getCoreKeyword())
+      .then((result) => {
+        if (state.selectedDatasetFile !== requestedFile || state.currentView !== "dashboard") {
+          return;
+        }
+
+        setState({
+          isVisualizationLoading: false,
+          visualizationResult: result,
+          visualizationError: "",
+        });
+      })
+      .catch((error) => {
+        if (state.selectedDatasetFile !== requestedFile || state.currentView !== "dashboard") {
+          return;
+        }
+
+        setState({
+          isVisualizationLoading: false,
+          visualizationResult: null,
+          visualizationError: error && error.message
+            ? error.message
+            : "데이터 시각화 API 호출에 실패했습니다.",
+        });
+      });
+  }
+
   function render() {
     appRoot.replaceChildren();
 
@@ -466,12 +570,22 @@
         isKeywordLoading: state.isKeywordLoading,
         keywordResult: state.keywordResult,
         keywordError: state.keywordError,
+        selectedDatasetFile: state.selectedDatasetFile,
+        isVisualizationLoading: state.isVisualizationLoading,
+        visualizationResult: state.visualizationResult,
+        visualizationError: state.visualizationError,
+        onDatasetFileChange: handleDatasetFileChange,
+        onVisualizationSubmit: handleVisualizationSubmit,
         onNewPrompt: () => setState({
           currentView: "prompt",
           mainPrompt: "",
           isKeywordLoading: false,
           keywordResult: null,
           keywordError: "",
+          selectedDatasetFile: null,
+          isVisualizationLoading: false,
+          visualizationResult: null,
+          visualizationError: "",
         }),
         onLogout: handleLogout,
       })
