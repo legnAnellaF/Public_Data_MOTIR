@@ -1,5 +1,14 @@
-langchain
-langchain-google-genai
+fastapi
+uvicorn
+python-multipart
+pandas
+openpyxl
+python-dotenv
 pydantic
 tenacity
-python-dotenv
+langchain-google-genai
+langchain-core
+matplotlib
+requests
+pytest
+httpx

@@ -23,7 +23,7 @@
       <div class="brand-mark" aria-hidden="true">D</div>
       <div>
         <p class="eyebrow">Public Data Lab</p>
-        <h1>${isSignup ? "회원가입" : "공공데이터 시각화"}</h1>
+        <h1>${isSignupMode ? "회원가입" : "공공데이터 시각화"}</h1>
       </div>
     `;
 
