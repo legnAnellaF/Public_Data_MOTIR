@@ -35,7 +35,7 @@
 - 기존 `public-data-dashboard`와 `public-data-dashboard-vercel`처럼 역할이 겹치는 구조는 하나의 최종 프론트엔드 폴더로 통일하는 방향으로 정리합니다.
 - 기존 `public-data-keyword` 스크립트는 `backend/keyword_extractor.py`로 옮겨 import 가능한 Python 모듈로 정리했습니다.
 - 기존 루트의 `data_visualizer.py`는 `backend/data_visualizer.py`로 옮겨 import 가능한 Python 모듈로 정리했습니다.
-- 정적 프론트엔드는 `public-data-dashboard/src/api.js`의 최소 `fetch` 클라이언트로 FastAPI 백엔드의 `/api/keywords`와 `/api/visualize`를 호출합니다. `/api/visualize`는 대시보드 파일 업로드 UI와 연결되어 CSV/Excel 분석 결과를 표시합니다. 공공데이터포털 데이터셋 검색 후보 목록은 `/api/datasets/search`로 1차 연동했으며, 선택한 데이터셋의 실제 다운로드/자동 시각화와 실제 인증 연동은 추가하지 않습니다.
+- 정적 프론트엔드는 `public-data-dashboard/src/api.js`의 최소 `fetch` 클라이언트로 FastAPI 백엔드의 `/api/keywords`와 `/api/visualize`를 호출합니다. `/api/visualize`는 대시보드 파일 업로드 UI와 연결되어 CSV/Excel 분석 결과를 표시합니다. 공공데이터포털 데이터셋 검색 후보 목록은 `/api/datasets/search`로 1차 연동했고, 선택한 데이터셋의 상세 metadata와 다운로드/API 링크 후보는 `/api/datasets/detail`로 표시합니다. 선택한 데이터셋의 실제 다운로드/자동 시각화와 실제 인증 연동은 추가하지 않습니다.
 
 ## 로컬 실행 방법
 
@@ -80,7 +80,7 @@ localStorage.removeItem("PUBLIC_DATA_API_BASE_URL");
 ```
 
 
-대시보드의 “공공데이터 후보” 섹션은 키워드 추출 성공 시 추출 topic으로 `/api/datasets/search`를 자동 호출하고, 실패 시 원래 프롬프트 또는 수동 검색어로 후보 검색을 시도합니다. 현재 범위는 후보 목록 표시와 선택 상태 표시까지입니다. 선택한 데이터셋을 실제 CSV/API로 다운로드하거나 `/api/visualize`에 자동 연결하는 기능은 후속 PR에서 구현합니다.
+대시보드의 “공공데이터 후보” 섹션은 키워드 추출 성공 시 추출 topic으로 `/api/datasets/search`를 자동 호출하고, 실패 시 원래 프롬프트 또는 수동 검색어로 후보 검색을 시도합니다. 현재 범위는 후보 목록 표시, 선택 상태 표시, 선택한 데이터셋의 상세 metadata 및 다운로드/API 링크 후보 표시까지입니다. 링크는 새 탭으로 열 수 있지만 자동 다운로드하지 않으며, 선택한 데이터셋을 실제 CSV/API로 다운로드하거나 `/api/visualize`에 자동 연결하는 기능은 후속 PR에서 구현합니다.
 
 공공데이터포털 검색 API를 사용하려면 로컬 `.env` 또는 배포 환경 변수에 다음 값을 설정합니다. 실제 키는 절대 커밋하지 않습니다. `PUBLIC_DATA_PORTAL_BASE_URL`은 공공데이터포털의 실제 데이터셋 검색 endpoint가 확정되면 해당 URL로 덮어씁니다.
 
@@ -88,6 +88,8 @@ localStorage.removeItem("PUBLIC_DATA_API_BASE_URL");
 PUBLIC_DATA_API_KEY=your-public-data-api-key
 PUBLIC_DATA_PORTAL_BASE_URL=https://api.odcloud.kr/api
 ```
+
+데이터셋 후보 카드에서 **선택**을 누르면 프론트엔드가 선택한 검색 item 전체를 `/api/datasets/detail`의 `raw`로 전달해 우선 fixture/mock 기반 정규화 계층으로 상세 정보와 리소스 후보를 표시합니다. 실제 공공데이터포털 상세 endpoint가 확정된 환경에서는 `dataset_id` 또는 `url`만으로도 `PUBLIC_DATA_PORTAL_BASE_URL`/`PUBLIC_DATA_API_KEY` 기반 조회를 연결할 수 있게 backend helper를 분리했습니다. 실제 파일 다운로드 및 자동 시각화 연결은 후속 작업입니다.
 
 실제 배포 사이트에서 `/api/visualize`를 확인하려면 백엔드 배포가 먼저 완료되어야 하며, 배포된 정적 프론트엔드에 올바른 API base URL 설정이 적용되어 있어야 합니다.
 
@@ -136,7 +138,8 @@ uvicorn backend.app:app --reload --port 8000
 2. 브라우저에서 `http://localhost:5173`에 접속해 데모 계정으로 회원가입/로그인합니다.
 3. 메인 프롬프트를 제출해 대시보드로 이동합니다.
 4. 시각화 패널에서 `.csv`, `.xlsx`, `.xls` 파일을 선택하고 **시각화 실행**을 누릅니다.
-5. 성공 시 차트 제목/유형/전략 이유, 라벨, 데이터셋, 일부 표 행, 창업 유의사항이 표시되는지 확인합니다.
+5. 공공데이터 후보에서 **선택**을 누른 뒤 “선택한 데이터셋 상세”와 다운로드/API 링크 후보가 표시되는지 확인합니다.
+6. 성공 시 차트 제목/유형/전략 이유, 라벨, 데이터셋, 일부 표 행, 창업 유의사항이 표시되는지 확인합니다.
 
 > 현재 표시는 Vanilla JS와 CSS 기반의 간단한 대시보드 표시입니다. Chart.js, React, Vite 같은 프론트엔드 빌드 체계나 차트 라이브러리는 도입하지 않았으며, 공공데이터포털 실제 API 검색/수집 연동은 후속 작업입니다.
 
@@ -239,6 +242,49 @@ curl -X POST http://localhost:8000/api/datasets/search \
 
 `keyword`가 비어 있으면 400을 반환합니다. `PUBLIC_DATA_API_KEY`가 없거나 외부 호출이 실패하면 503과 안전한 JSON 오류를 반환합니다. 이번 구현은 검색 후보 목록 표시까지이며, 선택 데이터셋의 실제 다운로드와 `/api/visualize` 자동 연결은 후속 작업입니다.
 
+### `POST /api/datasets/detail`
+
+선택한 공공데이터 후보의 상세 metadata와 다운로드/API 링크 후보를 안전하게 정규화해 반환합니다. 실제 공공데이터포털 상세 endpoint는 환경 설정으로 연결하도록 남겨 두었고, 프론트엔드는 선택한 후보 item 전체를 `raw`로 전달해 외부 호출 없이도 정규화 결과를 표시할 수 있습니다. `resources[].url`은 표시/새 탭 열기 후보일 뿐이며 이번 범위에서 자동 다운로드하거나 `/api/visualize`에 연결하지 않습니다.
+
+요청 예시:
+
+```bash
+curl -X POST http://localhost:8000/api/datasets/detail \
+  -H "Content-Type: application/json" \
+  -d '{"dataset_id":"ds-1","url":"https://www.data.go.kr/...","raw":{}}'
+```
+
+성공 응답 예시:
+
+```json
+{
+  "status": "success",
+  "dataset": {
+    "id": "string-or-null",
+    "title": "데이터셋 제목",
+    "description": "설명",
+    "provider": "제공기관",
+    "category": "분류",
+    "format": "CSV/API/JSON 등",
+    "updated_at": "날짜 또는 null",
+    "url": "상세 페이지"
+  },
+  "resources": [
+    {
+      "name": "파일/API 이름",
+      "format": "CSV/XLSX/JSON/API/unknown",
+      "url": "다운로드 또는 API 후보 URL",
+      "description": "설명",
+      "is_downloadable": true,
+      "is_api": false
+    }
+  ],
+  "message": ""
+}
+```
+
+`dataset_id`와 `url`이 모두 없고 `raw`에서도 식별자를 찾지 못하면 400을 반환합니다. API key/base URL 누락 또는 외부 API 실패 시 실제 key 값을 노출하지 않는 안전한 JSON 오류를 반환합니다.
+
 ### `POST /api/visualize`
 
 CSV 또는 Excel 파일을 업로드하면 `backend.data_visualizer.IntelligentVisualizerEngine`으로 분석해 차트 렌더링에 사용할 JSON 데이터를 반환합니다. 업로드 파일은 임시 파일로만 저장되며 처리 후 삭제됩니다.
@@ -336,7 +382,7 @@ GitHub Actions의 `CI` workflow는 `main` 브랜치 push와 `main` 대상 pull r
 ## TODO / 남은 작업
 
 - `/api/visualize` 고급 차트 렌더링 및 대용량 데이터 UX 개선
-- 공공데이터포털 실제 API 연동
+- 공공데이터포털 실제 상세 endpoint 확정 및 실데이터 다운로드/API 호출 연동
 - 실제 인증 방식 도입 및 localStorage 데모 회원가입/로그인 제거
 - 운영 배포 시 허용할 정확한 CORS origin 설정
 - 운영 배포 시 `GOOGLE_API_KEY` 등 secret을 배포 플랫폼의 secret manager 또는 환경 변수로 안전하게 관리
