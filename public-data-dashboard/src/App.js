@@ -223,6 +223,8 @@
     setState({
       currentUser: trimmedUserId,
       isLoggedIn: true,
+      currentUserId: userId,
+      authNotice: "",
       currentView: "prompt",
       authMode: "login",
       authError: "",
@@ -232,6 +234,11 @@
       promptHistory: readStoredPromptHistory(trimmedUserId),
       promptSessions: readStoredPromptSessions(trimmedUserId),
     });
+
+    return {
+      ok: true,
+      message: "회원가입이 완료되었습니다. 가입한 계정으로 로그인해 주세요.",
+    };
   }
 
   function handleSignup(userId, password) {
