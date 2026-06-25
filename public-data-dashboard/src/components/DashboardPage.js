@@ -323,15 +323,84 @@
         return resultBox;
       }
 
+      const safeResult = normalizeVisualizationResult(visualizationResult);
+      const warning = createIncompleteResultNotice(safeResult);
+      if (warning) {
+        resultBox.appendChild(warning);
+      }
+
       resultBox.append(
-        createResultSummary(visualizationResult),
-        createChartPreview(visualizationResult),
-        createDatasetList(visualizationResult.datasets),
-        createLabelList(visualizationResult.labels),
-        createResultTable(visualizationResult.table_data),
-        createPrecautionList(visualizationResult.startup_precautions)
+        createResultSummary(safeResult),
+        createChartPreview(safeResult),
+        createDatasetList(safeResult.datasets),
+        createLabelList(safeResult.labels),
+        createResultTable(safeResult.table_data),
+        createPrecautionList(safeResult.startup_precautions)
       );
       return resultBox;
+    }
+
+    function normalizeVisualizationResult(result) {
+      const source = result && typeof result === "object" ? result : {};
+      const labels = Array.isArray(source.labels) ? source.labels : [];
+      const datasets = Array.isArray(source.datasets)
+        ? source.datasets.map((dataset) => {
+            const safeDataset = dataset && typeof dataset === "object" ? dataset : {};
+            return {
+              label: typeof safeDataset.label === "string" && safeDataset.label.trim()
+                ? safeDataset.label
+                : "데이터셋",
+              data: Array.isArray(safeDataset.data) ? safeDataset.data : [],
+            };
+          })
+        : [];
+      const tableSource = source.table_data && typeof source.table_data === "object" ? source.table_data : {};
+      const precautions = Array.isArray(source.startup_precautions)
+        ? source.startup_precautions.filter((item) => typeof item === "string" && item.trim())
+        : [];
+
+      return {
+        status: source.status,
+        chart_type: source.chart_type,
+        chart_title: source.chart_title,
+        strategy_reason: source.strategy_reason,
+        labels,
+        datasets,
+        table_data: {
+          headers: Array.isArray(tableSource.headers) ? tableSource.headers : [],
+          rows: Array.isArray(tableSource.rows) ? tableSource.rows : [],
+        },
+        startup_precautions: precautions,
+        isIncomplete:
+          source.status !== "success" ||
+          !Array.isArray(source.labels) ||
+          !Array.isArray(source.datasets) ||
+          datasets.length === 0 ||
+          datasets.some((dataset) => !Array.isArray(dataset.data) || dataset.data.some((value) => !isRenderableDataValue(value))) ||
+          !source.table_data ||
+          !Array.isArray(tableSource.headers) ||
+          !Array.isArray(tableSource.rows) ||
+          !Array.isArray(source.startup_precautions) ||
+          source.startup_precautions.some((item) => typeof item !== "string"),
+      };
+    }
+
+    function isRenderableDataValue(value) {
+      if (value == null || value === "") {
+        return false;
+      }
+      return Number.isFinite(Number(value));
+    }
+
+    function createIncompleteResultNotice(result) {
+      if (!result.isIncomplete) {
+        return null;
+      }
+
+      const notice = document.createElement("p");
+      notice.className = "visualization-status warning";
+      notice.textContent = "표시 가능한 데이터가 제한적입니다. 일부 결과만 표시됩니다.";
+      return notice;
     }
 
     function createResultSummary(result) {
@@ -366,13 +435,16 @@
       const labels = Array.isArray(result.labels) ? result.labels : [];
       const firstDataset = Array.isArray(result.datasets) ? result.datasets[0] : null;
       const data = firstDataset && Array.isArray(firstDataset.data) ? firstDataset.data : [];
+      const numericData = data.map((value) => Number(value)).map((value) => (Number.isFinite(value) ? value : 0));
 
-      if (result.chart_type === "bar" && labels.length && data.length) {
-        card.appendChild(createBarChart(labels, data));
+      if (result.chart_type === "bar" && labels.length && numericData.length) {
+        card.appendChild(createBarChart(labels, numericData));
       } else {
         const fallback = document.createElement("p");
         fallback.className = "muted-text compact";
-        fallback.textContent = "line/pie 또는 기타 유형은 현재 요약, 라벨, 데이터셋, 표 중심으로 표시합니다.";
+        fallback.textContent = labels.length && data.length
+          ? "line/pie 또는 기타 유형은 현재 요약, 라벨, 데이터셋, 표 중심으로 표시합니다."
+          : "표시 가능한 데이터가 제한적입니다. 요약/표시 가능한 항목만 보여줍니다.";
         card.appendChild(fallback);
       }
       return card;
@@ -424,7 +496,8 @@
       (Array.isArray(datasets) ? datasets : []).forEach((dataset) => {
         const item = document.createElement("li");
         const data = Array.isArray(dataset.data) ? dataset.data : [];
-        item.textContent = `${dataset.label || "데이터셋"}: ${data.slice(0, 12).join(", ")}${data.length > 12 ? " ..." : ""}`;
+        const preview = data.slice(0, 12).map((value) => value == null || value === "" ? "(빈 값)" : String(value));
+        item.textContent = `${dataset.label || "데이터셋"}: ${preview.join(", ")}${data.length > 12 ? " ..." : ""}`;
         list.appendChild(item);
       });
       if (!list.children.length) {

@@ -968,6 +968,12 @@ textarea:focus {
   color: var(--danger);
 }
 
+.visualization-status.warning {
+  border-color: rgba(245, 158, 11, 0.25);
+  background: #fffbeb;
+  color: #b45309;
+}
+
 .visualization-empty {
   display: grid;
   gap: 8px;

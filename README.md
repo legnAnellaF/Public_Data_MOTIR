@@ -55,7 +55,30 @@ python -m http.server 5173
 
 브라우저에서 `http://localhost:5173`에 접속합니다. 프론트엔드 API 기본 주소는 `http://localhost:8000`이며, 배포/개발 환경에서는 `window.PUBLIC_DATA_API_BASE_URL` 또는 브라우저 `localStorage`의 `PUBLIC_DATA_API_BASE_URL` 값으로 덮어쓸 수 있습니다. 백엔드가 꺼져 있으면 대시보드 placeholder UI와 데모 로그인은 계속 동작하지만 키워드 API 결과 영역에는 연결/추출 실패 메시지가 표시될 수 있습니다.
 
-대시보드의 시각화 패널에서 `.csv`, `.xlsx`, `.xls` 파일을 선택한 뒤 **시각화 실행**을 누르면 `visualizeDataset(file, query, coreKeyword)`가 `/api/visualize`를 호출합니다. 응답의 `chart_title`, `chart_type`, `strategy_reason`, `labels`, `datasets`, `table_data`, `startup_precautions`를 Vanilla JS/HTML/CSS로 표시하며, Chart.js/React/Vite 또는 추가 npm 패키지는 사용하지 않습니다. `bar` 결과는 CSS 기반 간단 막대그래프로도 미리 보여주고, `line`/`pie` 등은 요약/목록/표 중심으로 표시합니다. 백엔드가 꺼져 있거나 분석에 실패해도 대시보드 전체가 깨지지 않고 시각화 영역에만 오류가 표시됩니다.
+Codespaces처럼 frontend forwarded URL과 backend forwarded URL이 서로 다르면 브라우저 개발자 도구 Console에서 백엔드 forwarded URL을 직접 지정합니다. 예를 들어 백엔드가 `https://example-8000.app.github.dev`로 열려 있다면 다음을 실행한 뒤 프론트엔드 페이지를 새로고침합니다.
+
+```js
+localStorage.setItem("PUBLIC_DATA_API_BASE_URL", "https://example-8000.app.github.dev");
+```
+
+로컬 기본값으로 되돌리려면 다음을 실행합니다.
+
+```js
+localStorage.removeItem("PUBLIC_DATA_API_BASE_URL");
+```
+
+대시보드의 시각화 패널에서 `.csv`, `.xlsx`, `.xls` 파일을 선택한 뒤 **시각화 실행**을 누르면 `visualizeDataset(file, query, coreKeyword)`가 `/api/visualize`를 호출합니다. 응답의 `chart_title`, `chart_type`, `strategy_reason`, `labels`, `datasets`, `table_data`, `startup_precautions`를 Vanilla JS/HTML/CSS로 표시하며, Chart.js/React/Vite 또는 추가 npm 패키지는 사용하지 않습니다. `bar` 결과는 CSS 기반 간단 막대그래프로도 미리 보여주고, `line`/`pie` 등은 요약/목록/표 중심으로 표시합니다. 응답 일부가 없거나 형식이 달라도 시각화 영역은 “표시 가능한 데이터가 제한적입니다. 일부 결과만 표시됩니다.” 안내와 함께 가능한 항목만 표시합니다. 백엔드가 꺼져 있거나 분석에 실패해도 대시보드 전체가 깨지지 않고 시각화 영역에만 오류가 표시됩니다.
+
+테스트용 CSV는 `tests/fixtures/visualize_sample.csv`를 사용할 수 있으며, 직접 만들 때는 아래처럼 범주형 컬럼 1개와 숫자형 컬럼 1개 이상을 포함합니다.
+
+```csv
+지역,매출,점포수
+서울,1000,10
+부산,700,7
+대구,500,5
+```
+
+실제 배포 사이트에서 `/api/visualize`를 확인하려면 백엔드 배포가 먼저 완료되어야 하며, 배포된 정적 프론트엔드에 올바른 API base URL 설정이 적용되어 있어야 합니다.
 
 ### 1. 프론트엔드 대시보드 실행
 
@@ -204,6 +227,25 @@ curl -X POST http://localhost:8000/api/visualize \
 ```
 
 허용 확장자는 `.csv`, `.xlsx`, `.xls`입니다. 프론트엔드에서도 동일한 확장자만 선택하도록 안내하며, 결과 표는 데이터가 많을 수 있어 처음 일부 행만 표시합니다.
+
+#### `/api/visualize` 성공 응답 스키마
+
+현재 프론트엔드 렌더러가 기대하는 성공 응답 계약은 다음과 같습니다. 백엔드는 별도 Pydantic response model로 강제하지 않지만, 프론트는 누락/형식 오류를 방어적으로 처리하며 불완전한 응답이면 제한 표시 안내를 보여줍니다.
+
+| 필드 | 타입 | 필수 여부 | 설명 |
+| --- | --- | --- | --- |
+| `status` | string | 필수 | 성공 시 `"success"`. 다른 값이 오면 불완전한 결과로 안내합니다. |
+| `chart_type` | string | 권장 | `"bar"`, `"line"`, `"pie"` 등 추천 차트 유형. 누락 시 `유형 미정`으로 표시합니다. |
+| `chart_title` | string | 권장 | 시각화 제목. 누락 시 `제목 없음`으로 표시합니다. |
+| `labels` | array | 권장 | 차트/목록 X축 라벨 배열. 배열이 아니거나 없으면 빈 라벨 상태로 표시합니다. |
+| `datasets` | array of object | 권장 | 각 항목은 `label` string과 `data` array를 가집니다. 없거나 비어 있으면 데이터셋 없음 안내를 표시합니다. |
+| `datasets[].data` | array | 권장 | 숫자 렌더링을 기대하지만 문자열/빈 값/null이 섞여도 프론트는 숫자로 변환 가능한 값만 그래프에 반영하고 나머지는 0 또는 `(빈 값)`으로 안전 표시합니다. |
+| `strategy_reason` | string | 권장 | 차트 선택 이유. 누락 시 기본 안내 문구를 표시합니다. |
+| `table_data.headers` | array | 권장 | 표 헤더 배열. 없거나 배열이 아니면 표 fallback UI를 표시합니다. |
+| `table_data.rows` | array | 권장 | 표 행 배열. 행은 배열 또는 헤더 키를 가진 객체일 수 있습니다. 없거나 배열이 아니면 표 fallback UI를 표시합니다. |
+| `startup_precautions` | array of string | 권장 | 창업 유의사항 문자열 배열. 문자열 배열이 아니면 표시 가능한 문자열만 사용하고 없으면 fallback 문구를 표시합니다. |
+
+오류 응답은 FastAPI `HTTPException.detail`에 `{ "status": "error", "message": "..." }` 형태의 안전한 메시지를 담습니다. 지원하지 않는 확장자는 400, 빈 파일 또는 숫자형 지표가 없어 시각화할 수 없는 파일은 422를 반환합니다.
 
 ## 키워드 추출 모듈 직접 실행
 
