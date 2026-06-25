@@ -163,6 +163,23 @@
     });
   }
 
+  function visualizeDatasetResource(resource, query, coreKeyword, options) {
+    const visualizeOptions = options || {};
+
+    return requestJson("/api/datasets/resource/visualize", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        resource: resource || {},
+        query: query || visualizeOptions.query || "",
+        core_keyword: coreKeyword || visualizeOptions.coreKeyword || visualizeOptions.core_keyword || "",
+      }),
+      fallbackMessage: "선택한 리소스 시각화 API 호출에 실패했습니다.",
+    });
+  }
+
   function visualizeDataset(file, query, coreKeyword) {
     const formData = new FormData();
     formData.append("file", file);
@@ -186,6 +203,7 @@
     fetchDatasetDetail,
     getDatasetDetail: fetchDatasetDetail,
     previewDatasetResource,
+    visualizeDatasetResource,
     visualizeDataset,
   };
 })();

@@ -365,3 +365,114 @@ def test_resource_preview_external_failure_returns_safe_error(monkeypatch):
     assert body["status"] == "error"
     assert "SECRET" not in str(body)
     assert "호출에 실패" in body["message"]
+
+
+def test_resource_visualize_missing_url_returns_400():
+    response = client.post("/api/datasets/resource/visualize", json={"resource": {"name": "no-url"}})
+
+    assert response.status_code == 400
+    assert "resource.url" in response.json()["detail"]["message"]
+
+
+def test_resource_visualize_blocks_unsafe_urls():
+    response = client.post(
+        "/api/datasets/resource/visualize",
+        json={"resource": {"name": "unsafe", "format": "CSV", "url": "http://127.0.0.1/data.csv"}},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["status"] == "error"
+
+
+def test_resource_visualize_remote_excel_returns_safe_error(monkeypatch):
+    monkeypatch.setattr("backend.app.urlopen", lambda request, timeout=0: FakePreviewResponse(b"excel", "application/vnd.ms-excel", "https://example.test/data.xlsx"))
+    monkeypatch.setattr("backend.public_data_portal._is_safe_hostname", lambda hostname: True)
+
+    response = client.post(
+        "/api/datasets/resource/visualize",
+        json={"resource": {"name": "Excel", "format": "XLSX", "url": "https://example.test/data.xlsx"}},
+    )
+
+    assert response.status_code == 422
+    assert "원격 Excel" in response.json()["detail"]["message"]
+
+
+def test_resource_visualize_csv_success_with_mocked_client(monkeypatch):
+    csv_body = (FIXTURES_DIR / "visualize_sample.csv").read_bytes()
+
+    def fake_urlopen(request, timeout=0):
+        assert timeout > 0
+        return FakePreviewResponse(csv_body, "text/csv", "https://example.test/data.csv?serviceKey=SECRET")
+
+    monkeypatch.setattr("backend.app.urlopen", fake_urlopen)
+    monkeypatch.setattr("backend.public_data_portal._is_safe_hostname", lambda hostname: True)
+
+    response = client.post(
+        "/api/datasets/resource/visualize",
+        json={"resource": {"name": "CSV", "format": "CSV", "url": "https://example.test/data.csv?serviceKey=SECRET"}, "query": "카페", "core_keyword": "상권"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "success"
+    assert body["labels"]
+    assert body["datasets"]
+    assert body["metadata"]["bytes_read"] == len(csv_body)
+    assert "SECRET" not in str(body)
+
+
+def test_resource_visualize_json_success_with_mocked_client(monkeypatch):
+    json_body = b'[{"region":"A","sales":10},{"region":"B","sales":20}]'
+
+    monkeypatch.setattr("backend.app.urlopen", lambda request, timeout=0: FakePreviewResponse(json_body, "application/json", "https://example.test/data.json"))
+    monkeypatch.setattr("backend.public_data_portal._is_safe_hostname", lambda hostname: True)
+
+    response = client.post(
+        "/api/datasets/resource/visualize",
+        json={"resource": {"name": "JSON", "format": "JSON", "url": "https://example.test/data.json"}},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "success"
+
+
+def test_resource_visualize_external_failure_returns_safe_error(monkeypatch):
+    from urllib.error import URLError
+
+    monkeypatch.setattr("backend.app.urlopen", lambda request, timeout=0: (_ for _ in ()).throw(URLError("boom SECRET")))
+    monkeypatch.setattr("backend.public_data_portal._is_safe_hostname", lambda hostname: True)
+
+    response = client.post(
+        "/api/datasets/resource/visualize",
+        json={"resource": {"name": "CSV", "format": "CSV", "url": "https://example.test/data.csv?api_key=SECRET"}},
+    )
+
+    assert response.status_code == 502
+    body = response.json()["detail"]
+    assert "SECRET" not in str(body)
+    assert "호출에 실패" in body["message"]
+
+
+def test_resource_visualize_temp_file_cleanup(monkeypatch):
+    csv_body = (FIXTURES_DIR / "visualize_sample.csv").read_bytes()
+    created_paths = []
+    import backend.app as app_module
+    original_named_temporary_file = app_module.tempfile.NamedTemporaryFile
+
+    def tracking_named_temporary_file(*args, **kwargs):
+        handle = original_named_temporary_file(*args, **kwargs)
+        created_paths.append(handle.name)
+        return handle
+
+    monkeypatch.setattr("backend.app.urlopen", lambda request, timeout=0: FakePreviewResponse(csv_body, "text/csv", "https://example.test/data.csv"))
+    monkeypatch.setattr("backend.public_data_portal._is_safe_hostname", lambda hostname: True)
+    monkeypatch.setattr("backend.app.tempfile.NamedTemporaryFile", tracking_named_temporary_file)
+
+    response = client.post(
+        "/api/datasets/resource/visualize",
+        json={"resource": {"name": "CSV", "format": "CSV", "url": "https://example.test/data.csv"}},
+    )
+
+    assert response.status_code == 200
+    assert created_paths
+    assert all(not Path(path).exists() for path in created_paths)

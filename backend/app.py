@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import csv
+import io
+import json
 import os
 import tempfile
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,7 +18,16 @@ from pydantic import BaseModel, Field
 
 from backend.data_visualizer import IntelligentVisualizerEngine
 from backend.keyword_extractor import analyze_project_idea
-from backend.public_data_portal import fetch_dataset_detail, fetch_dataset_search, fetch_resource_preview, normalize_dataset_detail
+from backend.public_data_portal import (
+    RESOURCE_PREVIEW_TIMEOUT_SECONDS,
+    fetch_dataset_detail,
+    fetch_dataset_search,
+    fetch_resource_preview,
+    infer_resource_format,
+    normalize_dataset_detail,
+    sanitize_url_for_response,
+    validate_resource_url,
+)
 
 
 ALLOWED_UPLOAD_EXTENSIONS = {".csv", ".xlsx", ".xls"}
@@ -57,6 +71,13 @@ class DatasetResourcePreviewRequest(BaseModel):
     max_rows: int = Field(10, ge=1, le=20, examples=[10])
 
 
+class DatasetResourceVisualizeRequest(BaseModel):
+    """Request body for explicit selected-resource visualization."""
+
+    resource: dict[str, Any] = Field(..., examples=[{"name": "파일/API 이름", "format": "CSV", "url": "https://example.test/data.csv"}])
+    query: str = Field("", examples=["사용자 프롬프트"])
+    core_keyword: str = Field("", examples=["키워드"])
+
 class DatasetDetailRequest(BaseModel):
     """Request body for public-data dataset detail lookup."""
 
@@ -86,6 +107,66 @@ def _to_jsonable(value: Any) -> Any:
             return value
     return value
 
+
+
+RESOURCE_VISUALIZE_MAX_BYTES = 5 * 1024 * 1024
+RESOURCE_VISUALIZE_SUPPORTED_FORMATS = {"CSV", "TSV", "JSON"}
+
+
+def _read_remote_resource_bytes(resource: dict[str, Any]) -> tuple[bytes, str, str, str, bool]:
+    """Fetch an explicitly selected remote resource with bounded bytes and SSRF checks."""
+    url = validate_resource_url(resource)
+    request = Request(url, headers={"Accept": "text/csv, text/tab-separated-values, application/json, */*", "User-Agent": "Public-Data-MOTIR/1.0"})
+    try:
+        with urlopen(request, timeout=RESOURCE_PREVIEW_TIMEOUT_SECONDS) as response:  # noqa: S310 - validate_resource_url and redirect host checks protect SSRF-prone targets.
+            final_url = response.geturl() if hasattr(response, "geturl") else url
+            validate_resource_url({"url": final_url})
+            content_type = response.headers.get("Content-Type", "") if getattr(response, "headers", None) else ""
+            fmt = infer_resource_format({**resource, "url": final_url}, content_type)
+            raw = response.read(RESOURCE_VISUALIZE_MAX_BYTES + 1)
+    except ValueError:
+        raise
+    except (HTTPError, URLError, TimeoutError, OSError):
+        raise _safe_error(status.HTTP_502_BAD_GATEWAY, "resource URL 호출에 실패했습니다. URL, timeout 또는 접근 권한을 확인해 주세요.") from None
+
+    truncated = len(raw) > RESOURCE_VISUALIZE_MAX_BYTES
+    if truncated:
+        raise _safe_error(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "원격 리소스가 허용된 크기보다 큽니다.", f"최대 {RESOURCE_VISUALIZE_MAX_BYTES} bytes까지만 분석합니다.")
+    return raw, fmt, content_type, sanitize_url_for_response(final_url), truncated
+
+
+def _json_records_to_csv_bytes(raw_bytes: bytes) -> bytes:
+    payload = json.loads(raw_bytes.decode("utf-8-sig", errors="replace"))
+    if isinstance(payload, dict):
+        for key in ("data", "items", "records", "result", "results"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                payload = value
+                break
+    if not isinstance(payload, list) or not payload or not all(isinstance(row, dict) for row in payload):
+        raise ValueError("JSON을 표 형태로 변환할 수 없습니다. 객체 배열 또는 data/items/records 배열만 지원합니다.")
+    headers = []
+    for row in payload:
+        for key in row:
+            if key not in headers and isinstance(row.get(key), (str, int, float, bool, type(None))):
+                headers.append(str(key))
+    if not headers:
+        raise ValueError("JSON에서 CSV로 변환할 열을 찾지 못했습니다.")
+    out = io.StringIO(newline="")
+    writer = csv.DictWriter(out, fieldnames=headers, extrasaction="ignore")
+    writer.writeheader()
+    for row in payload:
+        writer.writerow({key: row.get(key, "") for key in headers})
+    out.seek(0)
+    return out.getvalue().encode("utf-8-sig")
+
+
+def _visualize_temp_file(temp_path: str, query: str, core_keyword: str) -> dict[str, Any]:
+    visualizer = IntelligentVisualizerEngine()
+    result = visualizer.process(temp_path, query=query.strip(), core_keyword=core_keyword.strip())
+    if not result:
+        raise _safe_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "업로드한 파일에서 시각화 가능한 데이터를 찾지 못했습니다.")
+    return _to_jsonable(result)
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
@@ -177,6 +258,61 @@ def preview_dataset_resource(request: DatasetResourcePreviewRequest) -> dict[str
     return payload
 
 
+
+@app.post("/api/datasets/resource/visualize")
+def visualize_dataset_resource(request: DatasetResourceVisualizeRequest) -> dict[str, Any]:
+    """Safely fetch and visualize a user-confirmed remote CSV/TSV/JSON resource."""
+    resource = request.resource if isinstance(request.resource, dict) else {}
+    if not resource.get("url"):
+        raise _safe_error(status.HTTP_400_BAD_REQUEST, "resource.url이 필요합니다.")
+
+    temp_path: str | None = None
+    try:
+        raw_bytes, fmt, content_type, source_url, _ = _read_remote_resource_bytes(resource)
+        if fmt in {"XLS", "XLSX"}:
+            raise _safe_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "원격 Excel 자동 분석은 아직 지원하지 않으며 파일 업로드를 사용하세요.")
+        if fmt not in RESOURCE_VISUALIZE_SUPPORTED_FORMATS:
+            raise _safe_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "CSV/TSV/JSON 리소스만 자동 시각화를 지원합니다.")
+
+        suffix = ".tsv" if fmt == "TSV" else ".csv"
+        data_bytes = raw_bytes
+        if fmt == "TSV":
+            text = raw_bytes.decode("utf-8-sig", errors="replace")
+            rows = csv.reader(text.splitlines(), delimiter="	")
+            temp_text = io.StringIO(newline="")
+            writer = csv.writer(temp_text)
+            writer.writerows(rows)
+            temp_text.seek(0)
+            data_bytes = temp_text.getvalue().encode("utf-8-sig")
+            suffix = ".csv"
+        elif fmt == "JSON":
+            try:
+                data_bytes = _json_records_to_csv_bytes(raw_bytes)
+            except (ValueError, json.JSONDecodeError, UnicodeError) as exc:
+                raise _safe_error(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from None
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
+            temp_path = temp_file.name
+            temp_file.write(data_bytes)
+
+        result = _visualize_temp_file(temp_path, request.query, request.core_keyword)
+        result.setdefault("metadata", {})
+        if isinstance(result["metadata"], dict):
+            result["metadata"].update({"resource_format": fmt, "content_type": content_type, "bytes_read": len(raw_bytes), "source_url": source_url})
+        return result
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise _safe_error(status.HTTP_400_BAD_REQUEST, str(exc)) from None
+    except Exception:
+        raise _safe_error(status.HTTP_500_INTERNAL_SERVER_ERROR, "리소스 시각화 처리 중 오류가 발생했습니다.") from None
+    finally:
+        if temp_path:
+            try:
+                os.remove(temp_path)
+            except FileNotFoundError:
+                pass
+
 @app.post("/api/datasets/detail")
 def get_dataset_detail(request: DatasetDetailRequest) -> dict[str, Any]:
     """Return normalized metadata and resource link candidates for a selected dataset."""
@@ -219,14 +355,7 @@ async def visualize_data(
             while chunk := await file.read(1024 * 1024):
                 temp_file.write(chunk)
 
-        visualizer = IntelligentVisualizerEngine()
-        result = visualizer.process(temp_path, query=query.strip(), core_keyword=core_keyword.strip())
-        if not result:
-            raise _safe_error(
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
-                "업로드한 파일에서 시각화 가능한 데이터를 찾지 못했습니다.",
-            )
-        return _to_jsonable(result)
+        return _visualize_temp_file(temp_path, query, core_keyword)
     except HTTPException:
         raise
     except Exception:

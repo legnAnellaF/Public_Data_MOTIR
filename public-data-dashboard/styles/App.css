@@ -1414,3 +1414,26 @@ textarea:focus {
   line-height: 1.5;
   white-space: pre-wrap;
 }
+
+.resource-visualize-button {
+  margin-top: 0.5rem;
+}
+
+.resource-candidate-card .resource-visualize-button {
+  margin-left: 0.5rem;
+}
+
+.resource-preview-card .resource-visualize-button {
+  width: fit-content;
+}
+
+.resource-preview-hint,
+.resource-visualization-hint {
+  color: #64748b;
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.resource-preview-card .dataset-status.loading {
+  border-color: rgba(59, 130, 246, 0.25);
+}
