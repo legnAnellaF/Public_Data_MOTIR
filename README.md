@@ -214,17 +214,22 @@ result = visualizer.process("sample.csv", query="카페 창업 상권 분석")
 
 ## 테스트 및 검증
 
+저장소 루트의 `pytest.ini`가 `tests/`를 테스트 경로로 지정하고 repo root를 Python import path에 추가하므로, 로컬/Codespaces/CI에서 `pytest`만 실행해도 `backend` 패키지를 안정적으로 import할 수 있습니다.
+
 ```bash
 python -m compileall backend
 python - <<'PY'
 from backend.app import app
 print(app.title)
 PY
-node --check public-data-dashboard/src/components/LoginPage.js
+pytest
+node --check public-data-dashboard/src/api.js
 node --check public-data-dashboard/src/App.js
 node --check public-data-dashboard/src/components/DashboardPage.js
-pytest
+node --check public-data-dashboard/src/components/LoginPage.js
 ```
+
+GitHub Actions의 `CI` workflow는 `main` 브랜치 push와 `main` 대상 pull request에서 Python 3.12, Node.js 20 환경으로 백엔드 컴파일/import/pytest와 프론트엔드 JavaScript syntax check를 자동 실행합니다.
 
 ## TODO / 남은 작업
 
