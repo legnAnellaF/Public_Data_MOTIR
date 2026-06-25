@@ -99,9 +99,9 @@ def analyze_project_idea(user_input: str) -> ProjectAnalysis:
     return result
 
 if __name__ == "__main__":
-    print("======================================================")
+    print("------------------------------------------------------")
     print("공공데이터 포털 키워드")
-    print("======================================================")
+    print("------------------------------------------------------")
     
     while True:
         try:
@@ -118,7 +118,7 @@ if __name__ == "__main__":
             analysis_result = analyze_project_idea(user_input)
             
             # 결과를 깔끔한 JSON 포맷으로 터미널에 출력
-            print("===== [분석 결과 (JSON)] =====")
+            print("----- [분석 결과 (JSON)] -----")
             print(analysis_result.model_dump_json(indent=4))
             
             # 추출된 키워드로 공공데이터포털 검색창 자동 실행
