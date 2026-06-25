@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 
 from backend.data_visualizer import IntelligentVisualizerEngine
 from backend.keyword_extractor import analyze_project_idea
-from backend.public_data_portal import fetch_dataset_detail, normalize_dataset_detail, fetch_dataset_search
+from backend.public_data_portal import fetch_dataset_detail, fetch_dataset_search, fetch_resource_preview, normalize_dataset_detail
 
 
 ALLOWED_UPLOAD_EXTENSIONS = {".csv", ".xlsx", ".xls"}
@@ -48,6 +48,13 @@ class DatasetSearchRequest(BaseModel):
     keyword: str = Field(..., examples=["서울 빈집"])
     page: int = Field(1, ge=1, le=100, examples=[1])
     per_page: int = Field(10, ge=1, le=50, examples=[10])
+
+
+class DatasetResourcePreviewRequest(BaseModel):
+    """Request body for selected public-data resource preview."""
+
+    resource: dict[str, Any] = Field(..., examples=[{"name": "파일/API 이름", "format": "CSV", "url": "https://example.test/data.csv"}])
+    max_rows: int = Field(10, ge=1, le=20, examples=[10])
 
 
 class DatasetDetailRequest(BaseModel):
@@ -150,6 +157,24 @@ def _extract_dataset_identifier(request: DatasetDetailRequest) -> str:
         if isinstance(value, (str, int, float)) and str(value).strip():
             return str(value).strip()
     return ""
+
+
+@app.post("/api/datasets/resource/preview")
+def preview_dataset_resource(request: DatasetResourcePreviewRequest) -> dict[str, Any]:
+    """Return a small, bounded preview for a user-selected resource URL."""
+    resource = request.resource if isinstance(request.resource, dict) else {}
+    if not resource.get("url"):
+        raise _safe_error(status.HTTP_400_BAD_REQUEST, "resource.url이 필요합니다.")
+
+    try:
+        result = fetch_resource_preview(resource, max_rows=request.max_rows)
+    except ValueError as exc:
+        raise _safe_error(status.HTTP_400_BAD_REQUEST, str(exc)) from None
+
+    payload = result.to_dict()
+    if result.status != "success":
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=payload)
+    return payload
 
 
 @app.post("/api/datasets/detail")

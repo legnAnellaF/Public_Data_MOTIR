@@ -80,7 +80,7 @@ localStorage.removeItem("PUBLIC_DATA_API_BASE_URL");
 ```
 
 
-대시보드의 “공공데이터 후보” 섹션은 키워드 추출 성공 시 추출 topic으로 `/api/datasets/search`를 자동 호출하고, 실패 시 원래 프롬프트 또는 수동 검색어로 후보 검색을 시도합니다. 현재 범위는 후보 목록 표시, 선택 상태 표시, 선택한 데이터셋의 상세 metadata 및 다운로드/API 링크 후보 표시까지입니다. 링크는 새 탭으로 열 수 있지만 자동 다운로드하지 않으며, 선택한 데이터셋을 실제 CSV/API로 다운로드하거나 `/api/visualize`에 자동 연결하는 기능은 후속 PR에서 구현합니다.
+대시보드의 “공공데이터 후보” 섹션은 키워드 추출 성공 시 추출 topic으로 `/api/datasets/search`를 자동 호출하고, 실패 시 원래 프롬프트 또는 수동 검색어로 후보 검색을 시도합니다. 현재 범위는 후보 목록 표시, 선택 상태 표시, 선택한 데이터셋의 상세 metadata 및 다운로드/API 링크 후보 표시, 사용자가 누른 resource의 CSV/TSV/JSON 소량 미리보기까지입니다. 링크는 새 탭으로 열 수 있지만 자동 다운로드하지 않으며, 선택한 데이터셋을 실제 CSV/API로 전체 다운로드하거나 `/api/visualize`에 자동 연결하는 기능은 후속 PR에서 구현합니다.
 
 공공데이터포털 검색 API를 사용하려면 로컬 `.env` 또는 배포 환경 변수에 다음 값을 설정합니다. 실제 키는 절대 커밋하지 않습니다. `PUBLIC_DATA_PORTAL_BASE_URL`은 공공데이터포털의 실제 데이터셋 검색 endpoint가 확정되면 해당 URL로 덮어씁니다.
 
@@ -285,6 +285,50 @@ curl -X POST http://localhost:8000/api/datasets/detail \
 
 `dataset_id`와 `url`이 모두 없고 `raw`에서도 식별자를 찾지 못하면 400을 반환합니다. API key/base URL 누락 또는 외부 API 실패 시 실제 key 값을 노출하지 않는 안전한 JSON 오류를 반환합니다.
 
+
+### `POST /api/datasets/resource/preview`
+
+사용자가 데이터셋 상세 카드에서 명시적으로 선택한 resource URL을 backend에서 먼저 안전하게 검사한 뒤, CSV/TSV/JSON에 한해 작은 preview를 반환합니다. 이번 범위는 URL 안전성/형식/크기 확인과 소량 preview 표시까지이며, resource 전체 다운로드·저장 또는 `/api/visualize` 자동 연결은 하지 않습니다. 원격 Excel(`.xls`, `.xlsx`)은 보안/크기 이슈 때문에 직접 파싱하지 않고, 사용자가 파일을 내려받아 기존 업로드 UI로 직접 올리는 흐름을 안내합니다.
+
+요청 예시:
+
+```bash
+curl -X POST http://localhost:8000/api/datasets/resource/preview \
+  -H "Content-Type: application/json" \
+  -d '{"resource":{"name":"파일/API 이름","format":"CSV","url":"https://example.test/data.csv","description":"설명","is_downloadable":true,"is_api":false},"max_rows":10}'
+```
+
+성공 응답 예시:
+
+```json
+{
+  "status": "success",
+  "resource": {
+    "name": "파일/API 이름",
+    "format": "CSV",
+    "url": "https://example.test/data.csv",
+    "description": "설명",
+    "is_downloadable": true,
+    "is_api": false
+  },
+  "preview": {
+    "kind": "table",
+    "headers": ["col1", "col2"],
+    "rows": [["a", "1"], ["b", "2"]],
+    "truncated": false,
+    "message": "처음 2행만 표시합니다."
+  },
+  "metadata": {
+    "content_type": "text/csv",
+    "bytes_read": 18,
+    "source_url": "https://example.test/data.csv"
+  },
+  "message": ""
+}
+```
+
+`resource.url`이 없으면 400을 반환합니다. `http://`와 `https://`만 허용하며 `file://`, localhost, private IP, loopback, link-local, internal host 접근은 차단합니다. 외부 요청은 timeout과 최대 byte 수 제한을 두고, redirect 후 최종 URL host도 다시 검사합니다. 응답 metadata URL에는 `serviceKey`, `api_key`, `token`, `secret` 등 민감 query 값을 `REDACTED`로 치환해 실제 key/secret이 노출되지 않도록 합니다. 외부 요청 실패, timeout, 파싱 실패는 안전한 오류 메시지로만 반환합니다.
+
 ### `POST /api/visualize`
 
 CSV 또는 Excel 파일을 업로드하면 `backend.data_visualizer.IntelligentVisualizerEngine`으로 분석해 차트 렌더링에 사용할 JSON 데이터를 반환합니다. 업로드 파일은 임시 파일로만 저장되며 처리 후 삭제됩니다.
@@ -375,6 +419,9 @@ node --check public-data-dashboard/src/api.js
 node --check public-data-dashboard/src/App.js
 node --check public-data-dashboard/src/components/DashboardPage.js
 node --check public-data-dashboard/src/components/LoginPage.js
+rg -n "<<<<<<<|=======|>>>>>>>" . --hidden -g '!*.git/*' || true
+rg -n "AQ\.Ab|AIza|GOOGLE_API_KEY\s*=|PUBLIC_DATA_API_KEY\s*=|BEGIN (RSA|OPENSSH|PRIVATE)|api[_-]?key|secret" . --hidden -g '!*.git/*' -g '!backend/**pycache**/*' || true
+test ! -e public-data-dashboard-vercel && test ! -e public-data-keyword && test ! -e data_visualizer.py && echo forbidden-root-paths-ok
 ```
 
 GitHub Actions의 `CI` workflow는 `main` 브랜치 push와 `main` 대상 pull request에서 Python 3.12, Node.js 20 환경으로 백엔드 컴파일/import/pytest와 프론트엔드 JavaScript syntax check를 자동 실행합니다.
@@ -383,6 +430,7 @@ GitHub Actions의 `CI` workflow는 `main` 브랜치 push와 `main` 대상 pull r
 
 - `/api/visualize` 고급 차트 렌더링 및 대용량 데이터 UX 개선
 - 공공데이터포털 실제 상세 endpoint 확정 및 실데이터 다운로드/API 호출 연동
+- resource preview 결과를 사용자가 확인한 뒤 `/api/visualize` 업로드/분석 흐름과 안전하게 연결하는 후속 UX 설계
 - 실제 인증 방식 도입 및 localStorage 데모 회원가입/로그인 제거
 - 운영 배포 시 허용할 정확한 CORS origin 설정
 - 운영 배포 시 `GOOGLE_API_KEY` 등 secret을 배포 플랫폼의 secret manager 또는 환경 변수로 안전하게 관리

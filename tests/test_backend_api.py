@@ -258,3 +258,110 @@ def test_dataset_detail_success_with_mocked_client(monkeypatch):
     assert body["status"] == "success"
     assert body["dataset"]["title"] == "서울 빈집"
     assert body["resources"][0]["is_downloadable"] is True
+
+
+class FakePreviewResponse:
+    def __init__(self, body, content_type="text/csv", url="https://example.test/data.csv"):
+        self._body = body
+        self.headers = {"Content-Type": content_type}
+        self._url = url
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        return False
+
+    def read(self, size=-1):
+        if size is None or size < 0:
+            return self._body
+        return self._body[:size]
+
+    def geturl(self):
+        return self._url
+
+
+def test_resource_preview_missing_url_returns_400():
+    response = client.post("/api/datasets/resource/preview", json={"resource": {"name": "no-url"}})
+
+    assert response.status_code == 400
+    body = response.json()["detail"]
+    assert body["status"] == "error"
+    assert "resource.url" in body["message"]
+
+
+def test_resource_preview_blocks_unsafe_urls():
+    unsafe_urls = [
+        "file:///tmp/data.csv",
+        "http://localhost/data.csv",
+        "http://127.0.0.1/data.csv",
+        "http://10.0.0.1/data.csv",
+        "http://169.254.169.254/latest/meta-data",
+    ]
+
+    for url in unsafe_urls:
+        response = client.post("/api/datasets/resource/preview", json={"resource": {"name": "unsafe", "format": "CSV", "url": url}})
+        assert response.status_code == 400
+        assert response.json()["detail"]["status"] == "error"
+
+
+def test_resource_preview_csv_success_with_mocked_client(monkeypatch):
+    def fake_urlopen(request, timeout=0):
+        assert timeout > 0
+        return FakePreviewResponse(b"col1,col2\na,1\nb,2\n", "text/csv", "https://example.test/data.csv?serviceKey=SECRET")
+
+    monkeypatch.setattr("backend.public_data_portal.urlopen", fake_urlopen)
+    monkeypatch.setattr("backend.public_data_portal._is_safe_hostname", lambda hostname: True)
+
+    response = client.post(
+        "/api/datasets/resource/preview",
+        json={"resource": {"name": "CSV", "format": "CSV", "url": "https://example.test/data.csv?serviceKey=SECRET"}, "max_rows": 10},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "success"
+    assert body["preview"]["kind"] == "table"
+    assert body["preview"]["headers"] == ["col1", "col2"]
+    assert body["preview"]["rows"] == [["a", "1"], ["b", "2"]]
+    assert "SECRET" not in str(body)
+    assert "REDACTED" in body["metadata"]["source_url"]
+
+
+def test_resource_preview_json_success_with_mocked_client(monkeypatch):
+    def fake_urlopen(request, timeout=0):
+        return FakePreviewResponse(b'{"a": 1, "b": [2, 3]}', "application/json", "https://example.test/data.json")
+
+    monkeypatch.setattr("backend.public_data_portal.urlopen", fake_urlopen)
+    monkeypatch.setattr("backend.public_data_portal._is_safe_hostname", lambda hostname: True)
+
+    response = client.post(
+        "/api/datasets/resource/preview",
+        json={"resource": {"name": "JSON", "format": "JSON", "url": "https://example.test/data.json"}, "max_rows": 10},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["preview"]["kind"] == "json"
+    assert body["preview"]["data"]["a"] == 1
+
+
+def test_resource_preview_external_failure_returns_safe_error(monkeypatch):
+    from urllib.error import URLError
+
+    def fake_urlopen(request, timeout=0):
+        raise URLError("boom SECRET")
+
+    monkeypatch.setattr("backend.public_data_portal.urlopen", fake_urlopen)
+    monkeypatch.setattr("backend.public_data_portal._is_safe_hostname", lambda hostname: True)
+
+    response = client.post(
+        "/api/datasets/resource/preview",
+        json={"resource": {"name": "CSV", "format": "CSV", "url": "https://example.test/data.csv?api_key=SECRET"}},
+    )
+
+    assert response.status_code == 502
+    body = response.json()["detail"]
+    assert body["status"] == "error"
+    assert "SECRET" not in str(body)
+    assert "호출에 실패" in body["message"]
