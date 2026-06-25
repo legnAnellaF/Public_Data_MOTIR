@@ -130,6 +130,23 @@
     });
   }
 
+  function fetchDatasetDetail(dataset) {
+    const source = dataset && typeof dataset === "object" ? dataset : {};
+
+    return requestJson("/api/datasets/detail", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        dataset_id: source.id || source.datasetId || null,
+        url: source.url || source.detailUrl || source.link || null,
+        raw: source.raw && typeof source.raw === "object" ? source.raw : source,
+      }),
+      fallbackMessage: "선택한 데이터셋 상세 조회에 실패했습니다.",
+    });
+  }
+
   function visualizeDataset(file, query, coreKeyword) {
     const formData = new FormData();
     formData.append("file", file);
@@ -150,6 +167,8 @@
     checkApiHealth,
     extractKeywords,
     searchDatasets,
+    fetchDatasetDetail,
+    getDatasetDetail: fetchDatasetDetail,
     visualizeDataset,
   };
 })();

@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 
 from backend.data_visualizer import IntelligentVisualizerEngine
 from backend.keyword_extractor import analyze_project_idea
-from backend.public_data_portal import fetch_dataset_search
+from backend.public_data_portal import fetch_dataset_detail, normalize_dataset_detail, fetch_dataset_search
 
 
 ALLOWED_UPLOAD_EXTENSIONS = {".csv", ".xlsx", ".xls"}
@@ -48,6 +48,14 @@ class DatasetSearchRequest(BaseModel):
     keyword: str = Field(..., examples=["서울 빈집"])
     page: int = Field(1, ge=1, le=100, examples=[1])
     per_page: int = Field(10, ge=1, le=50, examples=[10])
+
+
+class DatasetDetailRequest(BaseModel):
+    """Request body for public-data dataset detail lookup."""
+
+    dataset_id: str | None = Field(None, examples=["dataset-id-or-null"])
+    url: str | None = Field(None, examples=["https://www.data.go.kr/..."])
+    raw: dict[str, Any] | None = Field(None, examples=[{}])
 
 
 def _safe_error(status_code: int, message: str, detail: str | None = None) -> HTTPException:
@@ -128,6 +136,39 @@ def search_datasets(request: DatasetSearchRequest) -> dict[str, Any]:
     if result.status != "success":
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=payload)
 
+    return payload
+
+
+def _extract_dataset_identifier(request: DatasetDetailRequest) -> str:
+    for value in (request.dataset_id, request.url):
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    raw = request.raw if isinstance(request.raw, dict) else {}
+    for key in ("id", "datasetId", "dataId", "serviceKey", "infId", "dtstId", "url", "link", "detailUrl", "apiUrl", "endpoint", "상세URL"):
+        value = raw.get(key)
+        if isinstance(value, (str, int, float)) and str(value).strip():
+            return str(value).strip()
+    return ""
+
+
+@app.post("/api/datasets/detail")
+def get_dataset_detail(request: DatasetDetailRequest) -> dict[str, Any]:
+    """Return normalized metadata and resource link candidates for a selected dataset."""
+    identifier = _extract_dataset_identifier(request)
+    if not identifier:
+        raise _safe_error(
+            status.HTTP_400_BAD_REQUEST,
+            "dataset_id 또는 url이 필요합니다. raw에 식별 가능한 id/url이 있어도 사용할 수 있습니다.",
+        )
+
+    if isinstance(request.raw, dict) and request.raw:
+        return normalize_dataset_detail(request.raw).to_dict()
+
+    result = fetch_dataset_detail(identifier)
+    payload = result.to_dict()
+    if result.status != "success":
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=payload)
     return payload
 
 

@@ -163,3 +163,98 @@ def test_dataset_search_success_with_mocked_client(monkeypatch):
     assert body["status"] == "success"
     assert body["query"] == "서울 빈집"
     assert body["items"][0]["title"] == "서울 빈집"
+
+
+
+def test_dataset_detail_missing_identifier_returns_400():
+    response = client.post("/api/datasets/detail", json={"raw": {}})
+
+    assert response.status_code == 400
+    body = response.json()["detail"]
+    assert body["status"] == "error"
+    assert "dataset_id" in body["message"]
+
+
+def test_dataset_detail_without_api_key_returns_safe_error(monkeypatch):
+    monkeypatch.delenv("PUBLIC_DATA_API_KEY", raising=False)
+    monkeypatch.setenv("PUBLIC_DATA_PORTAL_BASE_URL", "https://example.test/detail")
+
+    response = client.post("/api/datasets/detail", json={"dataset_id": "ds-1"})
+
+    assert response.status_code == 503
+    body = response.json()["detail"]
+    assert body["status"] == "error"
+    assert body["resources"] == []
+    assert "PUBLIC_DATA_API_KEY" in body["message"]
+    assert "secret" not in str(body).lower()
+
+
+def test_dataset_detail_without_base_url_returns_safe_error(monkeypatch):
+    monkeypatch.setenv("PUBLIC_DATA_API_KEY", "test-key")
+    monkeypatch.delenv("PUBLIC_DATA_PORTAL_BASE_URL", raising=False)
+
+    response = client.post("/api/datasets/detail", json={"dataset_id": "ds-1"})
+
+    assert response.status_code == 503
+    body = response.json()["detail"]
+    assert body["status"] == "error"
+    assert "PUBLIC_DATA_PORTAL_BASE_URL" in body["message"]
+    assert "test-key" not in str(body)
+
+
+def test_normalize_dataset_detail_fixture_extracts_resources():
+    from backend.public_data_portal import normalize_dataset_detail
+
+    payload = {
+        "datasetId": "ds-1",
+        "datasetName": "서울특별시 빈집 현황",
+        "desc": "서울 지역 빈집 통계 데이터",
+        "orgName": "서울특별시",
+        "categoryName": "주택",
+        "fileFormat": "CSV",
+        "modifiedDate": "2025-12-31",
+        "detailUrl": "https://example.test/datasets/ds-1",
+        "resources": [
+            {
+                "name": "빈집 현황 CSV",
+                "downloadUrl": "https://example.test/files/vacant.csv",
+                "description": "CSV 다운로드 후보",
+            },
+            {
+                "apiName": "빈집 현황 API",
+                "apiUrl": "https://example.test/openapi/vacant",
+                "format": "API",
+            },
+        ],
+    }
+
+    result = normalize_dataset_detail(payload)
+
+    assert result.status == "success"
+    assert result.dataset["id"] == "ds-1"
+    assert result.dataset["title"] == "서울특별시 빈집 현황"
+    assert result.resources[0]["format"] == "CSV"
+    assert result.resources[0]["is_downloadable"] is True
+    assert result.resources[1]["is_api"] is True
+
+
+def test_dataset_detail_success_with_mocked_client(monkeypatch):
+    from backend.public_data_portal import DatasetDetailResult
+
+    def fake_fetch(identifier):
+        assert identifier == "ds-1"
+        return DatasetDetailResult(
+            status="success",
+            dataset={"id": "ds-1", "title": "서울 빈집", "description": "", "provider": "서울시", "category": "주택", "format": "CSV", "updated_at": None, "url": "https://example.test/ds-1"},
+            resources=[{"name": "CSV", "format": "CSV", "url": "https://example.test/file.csv", "description": "", "is_downloadable": True, "is_api": False}],
+        )
+
+    monkeypatch.setattr("backend.app.fetch_dataset_detail", fake_fetch)
+
+    response = client.post("/api/datasets/detail", json={"dataset_id": "ds-1"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "success"
+    assert body["dataset"]["title"] == "서울 빈집"
+    assert body["resources"][0]["is_downloadable"] is True

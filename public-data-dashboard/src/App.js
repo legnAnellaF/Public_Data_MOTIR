@@ -203,6 +203,9 @@
     datasetSearchResult: null,
     datasetSearchError: "",
     selectedDataset: null,
+    isDatasetDetailLoading: false,
+    datasetDetailResult: null,
+    datasetDetailError: "",
     selectedDatasetFile: null,
     isVisualizationLoading: false,
     visualizationResult: null,
@@ -251,6 +254,9 @@
       datasetSearchResult: null,
       datasetSearchError: "",
       selectedDataset: null,
+      isDatasetDetailLoading: false,
+      datasetDetailResult: null,
+      datasetDetailError: "",
       selectedDatasetFile: null,
       isVisualizationLoading: false,
       visualizationResult: null,
@@ -301,6 +307,9 @@
       datasetSearchResult: null,
       datasetSearchError: "",
       selectedDataset: null,
+      isDatasetDetailLoading: false,
+      datasetDetailResult: null,
+      datasetDetailError: "",
       selectedDatasetFile: null,
       isVisualizationLoading: false,
       visualizationResult: null,
@@ -332,6 +341,9 @@
       datasetSearchResult: null,
       datasetSearchError: "",
       selectedDataset: null,
+      isDatasetDetailLoading: false,
+      datasetDetailResult: null,
+      datasetDetailError: "",
       selectedDatasetFile: null,
       isVisualizationLoading: false,
       visualizationResult: null,
@@ -404,6 +416,9 @@
       datasetSearchResult: null,
       datasetSearchError: "",
       selectedDataset: null,
+      isDatasetDetailLoading: false,
+      datasetDetailResult: null,
+      datasetDetailError: "",
       selectedDatasetFile: null,
       isVisualizationLoading: false,
       visualizationResult: null,
@@ -428,6 +443,9 @@
       datasetSearchResult: null,
       datasetSearchError: "",
       selectedDataset: null,
+      isDatasetDetailLoading: false,
+      datasetDetailResult: null,
+      datasetDetailError: "",
       selectedDatasetFile: null,
       isVisualizationLoading: false,
       visualizationResult: null,
@@ -502,6 +520,9 @@
         datasetSearchResult: null,
         datasetSearchError: "검색할 키워드를 입력해 주세요.",
         selectedDataset: null,
+        isDatasetDetailLoading: false,
+        datasetDetailResult: null,
+        datasetDetailError: "",
       });
       return;
     }
@@ -512,6 +533,9 @@
         datasetSearchResult: null,
         datasetSearchError: "공공데이터 검색 API 클라이언트를 불러오지 못했습니다.",
         selectedDataset: null,
+        isDatasetDetailLoading: false,
+        datasetDetailResult: null,
+        datasetDetailError: "",
       });
       return;
     }
@@ -522,6 +546,9 @@
       datasetSearchResult: null,
       datasetSearchError: "",
       selectedDataset: null,
+      isDatasetDetailLoading: false,
+      datasetDetailResult: null,
+      datasetDetailError: "",
     });
 
     window.PublicDataDashboard.Api.searchDatasets(requestedKeyword, options || { page: 1, perPage: 10 })
@@ -535,6 +562,9 @@
           datasetSearchResult: result,
           datasetSearchError: "",
           selectedDataset: null,
+          isDatasetDetailLoading: false,
+          datasetDetailResult: null,
+          datasetDetailError: "",
         });
       })
       .catch((error) => {
@@ -549,6 +579,9 @@
             ? error.message
             : "공공데이터 후보 검색에 실패했습니다.",
           selectedDataset: null,
+          isDatasetDetailLoading: false,
+          datasetDetailResult: null,
+          datasetDetailError: "",
         });
       });
   }
@@ -558,7 +591,59 @@
   }
 
   function handleDatasetSelect(dataset) {
-    setState({ selectedDataset: dataset || null });
+    const selected = dataset || null;
+
+    if (!selected) {
+      setState({
+        selectedDataset: null,
+        isDatasetDetailLoading: false,
+        datasetDetailResult: null,
+        datasetDetailError: "",
+      });
+      return;
+    }
+
+    setState({
+      selectedDataset: selected,
+      isDatasetDetailLoading: true,
+      datasetDetailResult: null,
+      datasetDetailError: "",
+    });
+
+    if (!window.PublicDataDashboard.Api || !window.PublicDataDashboard.Api.fetchDatasetDetail) {
+      setState({
+        isDatasetDetailLoading: false,
+        datasetDetailResult: null,
+        datasetDetailError: "데이터셋 상세 API 클라이언트를 불러오지 못했습니다.",
+      });
+      return;
+    }
+
+    window.PublicDataDashboard.Api.fetchDatasetDetail(selected)
+      .then((result) => {
+        if (state.selectedDataset !== selected || state.currentView !== "dashboard") {
+          return;
+        }
+
+        setState({
+          isDatasetDetailLoading: false,
+          datasetDetailResult: result,
+          datasetDetailError: "",
+        });
+      })
+      .catch((error) => {
+        if (state.selectedDataset !== selected || state.currentView !== "dashboard") {
+          return;
+        }
+
+        setState({
+          isDatasetDetailLoading: false,
+          datasetDetailResult: null,
+          datasetDetailError: error && error.message
+            ? error.message
+            : "선택한 데이터셋 상세 조회에 실패했습니다.",
+        });
+      });
   }
 
   function getCoreKeyword() {
@@ -671,6 +756,9 @@
         datasetSearchResult: state.datasetSearchResult,
         datasetSearchError: state.datasetSearchError,
         selectedDataset: state.selectedDataset,
+        isDatasetDetailLoading: state.isDatasetDetailLoading,
+        datasetDetailResult: state.datasetDetailResult,
+        datasetDetailError: state.datasetDetailError,
         onDatasetSearchSubmit: handleDatasetSearchSubmit,
         onDatasetSelect: handleDatasetSelect,
         selectedDatasetFile: state.selectedDatasetFile,
@@ -689,6 +777,9 @@
           datasetSearchResult: null,
           datasetSearchError: "",
           selectedDataset: null,
+          isDatasetDetailLoading: false,
+          datasetDetailResult: null,
+          datasetDetailError: "",
           selectedDatasetFile: null,
           isVisualizationLoading: false,
           visualizationResult: null,

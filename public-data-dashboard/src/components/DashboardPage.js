@@ -14,6 +14,9 @@
     datasetSearchResult,
     datasetSearchError,
     selectedDataset,
+    isDatasetDetailLoading,
+    datasetDetailResult,
+    datasetDetailError,
     onDatasetSearchSubmit,
     onDatasetSelect,
     selectedDatasetFile,
@@ -325,11 +328,131 @@
       if (selectedDataset) {
         const notice = document.createElement("p");
         notice.className = "selected-dataset-notice";
-        notice.textContent = "선택한 데이터셋의 실제 다운로드/시각화 연결은 후속 작업입니다.";
+        notice.textContent = "실제 다운로드 및 자동 시각화 연결은 후속 작업입니다.";
         resultBox.appendChild(notice);
+        resultBox.appendChild(createSelectedDatasetDetailBlock());
       }
 
       return resultBox;
+    }
+
+
+    function createSelectedDatasetDetailBlock() {
+      const section = document.createElement("section");
+      section.className = "selected-dataset-detail-section";
+
+      const title = document.createElement("h3");
+      title.textContent = "선택한 데이터셋 상세";
+      section.appendChild(title);
+
+      if (isDatasetDetailLoading) {
+        section.appendChild(createDatasetStatus("loading", "선택한 데이터셋 상세 metadata와 리소스 후보를 조회 중입니다..."));
+        return section;
+      }
+
+      if (datasetDetailError) {
+        section.appendChild(createDatasetStatus("error", `선택한 데이터셋 상세 조회 실패: ${datasetDetailError}`));
+        return section;
+      }
+
+      if (!datasetDetailResult) {
+        section.appendChild(createDatasetStatus("empty", "데이터셋을 선택하면 상세 metadata와 다운로드/API 링크 후보가 표시됩니다."));
+        return section;
+      }
+
+      const detail = datasetDetailResult.dataset && typeof datasetDetailResult.dataset === "object"
+        ? datasetDetailResult.dataset
+        : selectedDataset || {};
+      const resources = Array.isArray(datasetDetailResult.resources) ? datasetDetailResult.resources : [];
+
+      section.append(createDatasetDetailCard(detail), createResourceCandidateBlock(resources));
+      return section;
+    }
+
+    function createDatasetDetailCard(detail) {
+      const card = document.createElement("article");
+      card.className = "dataset-detail-card";
+
+      const heading = document.createElement("h4");
+      heading.textContent = detail.title || "제목 없는 데이터셋";
+
+      const description = document.createElement("p");
+      description.className = "dataset-description";
+      description.textContent = detail.description || "설명이 제공되지 않았습니다.";
+
+      const meta = document.createElement("dl");
+      meta.className = "dataset-detail-meta-grid";
+      appendDatasetMeta(meta, "제공기관", detail.provider || "미상");
+      appendDatasetMeta(meta, "형식", detail.format || "형식 미정");
+      appendDatasetMeta(meta, "업데이트", detail.updated_at || "날짜 없음");
+      appendDatasetMeta(meta, "분류", detail.category || "미분류");
+
+      card.append(heading, description, meta);
+      if (detail.url) {
+        const link = document.createElement("a");
+        link.className = "dataset-detail-link";
+        link.href = detail.url;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = "상세 페이지 새 탭에서 열기";
+        card.appendChild(link);
+      }
+      return card;
+    }
+
+    function createResourceCandidateBlock(resources) {
+      const wrapper = document.createElement("div");
+      wrapper.className = "resource-candidate-section";
+
+      const heading = document.createElement("h4");
+      heading.textContent = "다운로드/API 링크 후보";
+      wrapper.appendChild(heading);
+
+      if (!resources.length) {
+        wrapper.appendChild(createDatasetStatus("empty", "표시할 다운로드/API 링크 후보가 없습니다. 실제 endpoint 연결은 후속 작업에서 보강합니다."));
+        return wrapper;
+      }
+
+      const list = document.createElement("div");
+      list.className = "resource-candidate-list";
+      resources.forEach((resource) => list.appendChild(createResourceCandidateCard(resource)));
+      wrapper.appendChild(list);
+      return wrapper;
+    }
+
+    function createResourceCandidateCard(resource) {
+      const item = resource && typeof resource === "object" ? resource : {};
+      const card = document.createElement("article");
+      card.className = "resource-candidate-card";
+
+      const header = document.createElement("div");
+      header.className = "resource-card-header";
+      const title = document.createElement("h5");
+      title.textContent = item.name || "리소스 후보";
+      const format = document.createElement("span");
+      format.className = "dataset-format-badge";
+      format.textContent = item.format || "unknown";
+      header.append(title, format);
+
+      const description = document.createElement("p");
+      description.className = "dataset-description";
+      description.textContent = item.description || "설명이 제공되지 않았습니다.";
+
+      const flags = document.createElement("p");
+      flags.className = "resource-flags";
+      flags.textContent = `${item.is_downloadable ? "다운로드 후보" : "다운로드 여부 미확정"} · ${item.is_api ? "API 후보" : "파일/링크 후보"}`;
+
+      card.append(header, description, flags);
+      if (item.url) {
+        const link = document.createElement("a");
+        link.className = "dataset-detail-link resource-url-link";
+        link.href = item.url;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = "URL 새 탭에서 열기";
+        card.appendChild(link);
+      }
+      return card;
     }
 
     function createDatasetStatus(type, text) {
