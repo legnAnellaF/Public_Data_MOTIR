@@ -4,6 +4,7 @@
   const currentUserStorageKey = "publicDataDashboardCurrentUser";
   const promptHistoryStorageKey = "publicDataDashboardPromptHistory";
   const promptSessionsStorageKey = "publicDataDashboardPromptSessions";
+  const demoModeStorageKey = "publicDataDashboardDemoMode";
 
   function getUserStorageKey(baseKey, userId) {
     return `${baseKey}:${encodeURIComponent(userId)}`;
@@ -219,6 +220,7 @@
     visualizationError: "",
     apiHealth: { status: "idle", message: "아직 확인하지 않았습니다.", checkedAt: "" },
     dataPortalDiagnostic: { status: "idle", message: "아직 확인하지 않았습니다.", checkedAt: "" },
+    isDemoMode: false,
   };
 
   if (storedCurrentUser && !hasStoredUser) {
@@ -555,6 +557,49 @@
       });
   }
 
+
+  function applyGuidedDemoMode() {
+    const demo = window.PublicDataDashboard.DemoData;
+    if (!demo) {
+      setState({ datasetSearchError: "오프라인 데모 fixture를 불러오지 못했습니다." });
+      return;
+    }
+    try { localStorage.setItem(demoModeStorageKey, "enabled"); } catch (error) {}
+    setState({
+      isDemoMode: true,
+      mainPrompt: demo.prompt,
+      currentView: "dashboard",
+      additionalPrompt: "",
+      additionalPrompts: [],
+      isKeywordLoading: false,
+      keywordResult: { topic: demo.keyword, keywords: demo.keyword.split(" ") },
+      keywordFallback: demo.keyword,
+      keywordError: "오프라인 데모: 실제 AI/API 호출 없이 fixture keyword로 흐름을 확인합니다.",
+      isDatasetSearchLoading: false,
+      datasetSearchResult: demo.searchResult,
+      datasetSearchError: "",
+      selectedDataset: demo.dataset,
+      isDatasetDetailLoading: false,
+      datasetDetailResult: demo.detailResult,
+      datasetDetailError: "",
+      selectedResource: demo.resource,
+      isResourcePreviewLoading: false,
+      resourcePreviewResult: demo.preview,
+      resourcePreviewError: "",
+      isResourceVisualizationLoading: false,
+      resourceVisualizationError: "",
+      selectedDatasetFile: null,
+      isVisualizationLoading: false,
+      visualizationResult: demo.visualization,
+      visualizationError: "",
+    });
+  }
+
+  function exitGuidedDemoMode() {
+    try { localStorage.removeItem(demoModeStorageKey); } catch (error) {}
+    setState({ isDemoMode: false });
+  }
+
   function handleMainPromptSubmit(prompt) {
     const trimmedPrompt = prompt.trim();
     const nextHistory = rememberPrompt(trimmedPrompt, state.currentUser);
@@ -570,6 +615,7 @@
       additionalPrompts: session.additionalPrompts || [],
       promptHistory: nextHistory,
       promptSessions: nextSessions,
+      isDemoMode: false,
       isKeywordLoading: true,
       keywordResult: null,
       keywordFallback: "",
@@ -604,6 +650,7 @@
       currentView: "dashboard",
       additionalPrompt: "",
       additionalPrompts: session.additionalPrompts || [],
+      isDemoMode: false,
       isKeywordLoading: true,
       keywordResult: null,
       keywordFallback: "",
@@ -1114,10 +1161,14 @@
         apiHealth: state.apiHealth,
         dataPortalDiagnostic: state.dataPortalDiagnostic,
         apiRequestHistory: window.PublicDataDashboard.Api && window.PublicDataDashboard.Api.getRequestHistory ? window.PublicDataDashboard.Api.getRequestHistory() : [],
+        isDemoMode: state.isDemoMode,
+        onGuidedDemoStart: applyGuidedDemoMode,
+        onGuidedDemoExit: exitGuidedDemoMode,
         onApiConnectionCheck: checkApiConnection,
         onDataPortalDiagnosticCheck: checkDataPortalConnection,
         onApiBaseUrlSave: handleApiBaseUrlSave,
         onNewPrompt: () => setState({
+          isDemoMode: false,
           currentView: "prompt",
           mainPrompt: "",
           isKeywordLoading: false,
@@ -1131,6 +1182,12 @@
           isDatasetDetailLoading: false,
           datasetDetailResult: null,
           datasetDetailError: "",
+          selectedResource: null,
+          isResourcePreviewLoading: false,
+          resourcePreviewResult: null,
+          resourcePreviewError: "",
+          isResourceVisualizationLoading: false,
+          resourceVisualizationError: "",
           selectedDatasetFile: null,
           isVisualizationLoading: false,
           visualizationResult: null,

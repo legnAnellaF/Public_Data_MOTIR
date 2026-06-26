@@ -1520,3 +1520,25 @@ textarea:focus {
   color: #4b5563;
   font-size: 0.86rem;
 }
+
+.demo-mode-card { display: grid; gap: 10px; }
+.demo-mode-card.active { border-left: 4px solid #2563eb; padding-left: 12px; }
+.report-actions, .resource-candidate-card .report-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.report-panel { display: grid; gap: 12px; }
+.report-mode-badge { margin: 0; font-weight: 700; color: #1d4ed8; }
+.report-summary-preview { max-height: 360px; overflow: auto; white-space: pre-wrap; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px; font-size: 0.88rem; line-height: 1.55; }
+.report-button { min-height: 36px; }
+.follow-up-box { margin: 12px 0; padding: 12px; border: 1px solid #dbeafe; border-radius: 14px; background: #eff6ff; }
+.follow-up-box p { margin: 0 0 8px; font-weight: 700; color: #1e3a8a; }
+.follow-up-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.follow-up-chip { border: 1px solid #bfdbfe; background: #fff; color: #1d4ed8; border-radius: 999px; padding: 7px 10px; cursor: pointer; font-size: 0.86rem; }
+.resource-candidate-card { display: flex; flex-direction: column; gap: 8px; }
+.resource-candidate-card > button, .resource-candidate-card > a { align-self: flex-start; }
+.validation-status-shell .panel-content, .dataset-search-panel .panel-content { max-height: 78vh; overflow: auto; padding-right: 4px; }
+@media (min-width: 1024px) {
+  .dashboard-layout { grid-template-columns: minmax(340px, 0.9fr) minmax(560px, 1.35fr); gap: 22px; }
+}
+@media (max-width: 760px) {
+  .report-actions, .follow-up-list { flex-direction: column; align-items: stretch; }
+  .follow-up-chip, .report-button { width: 100%; }
+}

@@ -42,6 +42,9 @@
     onApiConnectionCheck,
     onDataPortalDiagnosticCheck,
     onApiBaseUrlSave,
+    isDemoMode,
+    onGuidedDemoStart,
+    onGuidedDemoExit,
     onNewPrompt,
     onLogout,
   }) {
@@ -88,11 +91,42 @@
     const rightColumn = document.createElement("div");
     rightColumn.className = "dashboard-column right-column";
 
-    leftColumn.append(createApiConnectionPanel(), createValidationStatusPanel(), createOutlinePanel(mainPrompt), createAdditionalPromptPanel());
-    rightColumn.append(createDatasetSearchPanel(), createVisualizationPanel(), createCommentPanel(mainPrompt));
+    leftColumn.append(createApiConnectionPanel(), createDemoModePanel(), createValidationStatusPanel(), createOutlinePanel(mainPrompt), createAdditionalPromptPanel());
+    rightColumn.append(createDatasetSearchPanel(), createVisualizationPanel(), createReportPanel(), createCommentPanel(mainPrompt));
     layout.append(leftColumn, rightColumn);
     page.append(header, layout);
 
+
+
+    function createDemoModePanel() {
+      const wrapper = document.createElement("div");
+      wrapper.className = `demo-mode-card ${isDemoMode ? "active" : ""}`.trim();
+      const text = document.createElement("p");
+      text.textContent = isDemoMode
+        ? "오프라인 데모가 켜져 있습니다. 현재 화면은 시연용 fixture이며 실제 data.go.kr 검색 결과가 아닙니다."
+        : "live data.go.kr 연결이 WAF/네트워크로 실패해도 전체 UX를 설명할 수 있는 명시적 데모 경로입니다.";
+      const actions = document.createElement("div");
+      actions.className = "report-actions";
+      const start = document.createElement("button");
+      start.type = "button";
+      start.className = "primary-button";
+      start.textContent = "데모 흐름으로 확인";
+      start.addEventListener("click", () => onGuidedDemoStart && onGuidedDemoStart());
+      actions.appendChild(start);
+      if (isDemoMode) {
+        const exit = document.createElement("button");
+        exit.type = "button";
+        exit.className = "ghost-button";
+        exit.textContent = "데모 표시 해제";
+        exit.addEventListener("click", () => onGuidedDemoExit && onGuidedDemoExit());
+        actions.appendChild(exit);
+      }
+      const note = document.createElement("p");
+      note.className = "muted-text compact";
+      note.textContent = "데모 데이터 기반 흐름 확인: API key/secret 없이 frontend fixture만 사용합니다.";
+      wrapper.append(text, actions, note);
+      return window.PublicDataDashboard.Panel({ title: "오프라인 데모", children: wrapper, className: "demo-mode-shell" });
+    }
 
     function createValidationStatusPanel() {
       const wrapper = document.createElement("div");
@@ -247,7 +281,7 @@
         return `data.go.kr 연결 성공: ${diagnostic.message || "후보를 확인했습니다."}`;
       }
       if (diagnostic.status === "error") {
-        return `data.go.kr 연결 실패: ${diagnostic.message || "원인을 확인하려면 backend 로그를 확인하세요."}`;
+        return `data.go.kr 연결 실패: ${diagnostic.message || "외부 연결/WAF/포털 상태 가능성이 있습니다. 코드 전체 실패는 아니며 오프라인 데모로 흐름 확인이 가능합니다."}`;
       }
       if (diagnostic.status === "checking") {
         return diagnostic.message || "data.go.kr 연결 확인 중...";
@@ -322,7 +356,7 @@
 
       if (keywordError) {
         const fallback = getEffectiveKeyword();
-        return `${keywordError}${fallback ? ` fallback keyword: ${fallback}` : ""}`;
+        return `${keywordError} 전체 실패가 아니며 fallback으로 계속 진행합니다.${fallback ? ` fallback keyword: ${fallback}` : ""}`;
       }
 
       const keywords = formatKeywordResult(keywordResult);
@@ -414,13 +448,40 @@
         onAdditionalPromptSubmit();
       });
 
-      wrapper.append(conversation, form);
+      wrapper.append(conversation, createFollowUpQuestionBlock(), form);
 
       return window.PublicDataDashboard.Panel({
         title: "추가 프롬프트 대화",
         children: wrapper,
         className: "conversation-panel-shell",
       });
+    }
+
+
+    function createFollowUpQuestionBlock() {
+      const helper = window.PublicDataDashboard.AnalysisHelpers;
+      const questions = helper && helper.deriveFollowUpQuestions ? helper.deriveFollowUpQuestions(getAnalysisContext()) : [];
+      const box = document.createElement("div");
+      box.className = "follow-up-box";
+      const title = document.createElement("p");
+      title.textContent = "추천 후속 질문 (클릭하면 입력창에 채워지며 자동 재검색은 하지 않습니다)";
+      box.appendChild(title);
+      const list = document.createElement("div");
+      list.className = "follow-up-list";
+      questions.forEach((question) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "follow-up-chip";
+        btn.textContent = question;
+        btn.addEventListener("click", () => {
+          onAdditionalPromptChange(question);
+          const textarea = page.querySelector("#additional-prompt");
+          if (textarea) textarea.value = question;
+        });
+        list.appendChild(btn);
+      });
+      box.appendChild(list);
+      return box;
     }
 
     function createAdditionalPromptExchange(prompt, replyText = createAdditionalPromptReply(prompt)) {
@@ -497,7 +558,7 @@
       }
 
       if (datasetSearchError) {
-        resultBox.appendChild(createDatasetStatus("error", `공공데이터 후보 검색 실패: ${datasetSearchError}`));
+        resultBox.appendChild(createDatasetStatus("error", `공공데이터 후보 검색 실패: ${datasetSearchError} 외부 연결/WAF/포털 상태일 수 있으며 오프라인 데모 또는 직접 업로드로 계속 확인할 수 있습니다.`));
         return resultBox;
       }
 
@@ -604,7 +665,7 @@
       wrapper.appendChild(heading);
 
       if (!resources.length) {
-        wrapper.appendChild(createDatasetStatus("empty", "표시할 다운로드/API 링크 후보가 없습니다. 후보 검색은 성공해도 preview 가능한 resource가 없을 수 있습니다."));
+        wrapper.appendChild(createDatasetStatus("empty", "표시할 다운로드/API 링크 후보가 없습니다. 포털 상세 페이지 구조나 권한 제한 때문일 수 있으며 직접 파일 업로드 대안 경로를 사용할 수 있습니다."));
         return wrapper;
       }
 
@@ -1273,6 +1334,56 @@
       return description ? `시각화 보드 - ${description}` : "시각화 보드";
     }
 
+
+    function createReportPanel() {
+      const helper = window.PublicDataDashboard.AnalysisHelpers;
+      const context = getAnalysisContext();
+      const markdown = helper && helper.buildReportSummaryMarkdown ? helper.buildReportSummaryMarkdown(context) : "리포트 요약을 생성할 수 없습니다.";
+      const jsonSummary = helper && helper.buildReportSummaryJson ? helper.buildReportSummaryJson(context) : {};
+      const wrapper = document.createElement("div");
+      wrapper.className = "report-panel";
+      const badge = document.createElement("p");
+      badge.className = "report-mode-badge";
+      badge.textContent = isDemoMode ? "데모 데이터 기반 리포트(실제 포털 결과 아님)" : "현재 화면 상태 기반 리포트";
+      const pre = document.createElement("pre");
+      pre.className = "report-summary-preview";
+      pre.textContent = markdown;
+      const actions = document.createElement("div");
+      actions.className = "report-actions";
+      actions.append(
+        createReportActionButton("요약 복사", () => copyText(markdown)),
+        createReportActionButton("Markdown 다운로드", () => downloadText("public-data-report-summary.md", markdown, "text/markdown")),
+        createReportActionButton("JSON 다운로드", () => downloadText("public-data-report-summary.json", JSON.stringify(jsonSummary, null, 2), "application/json"))
+      );
+      wrapper.append(badge, actions, pre);
+      return window.PublicDataDashboard.Panel({ title: "분석 리포트 요약", children: wrapper, className: "report-panel-shell" });
+    }
+
+    function createReportActionButton(label, handler) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "ghost-button report-button";
+      button.textContent = label;
+      button.addEventListener("click", handler);
+      return button;
+    }
+
+    function copyText(text) {
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text);
+    }
+
+    function downloadText(filename, text, type) {
+      const blob = new Blob([text], { type: `${type};charset=utf-8` });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    }
+
     function createCommentPanel(prompt) {
       const wrapper = document.createElement("div");
       wrapper.className = "comment-thread";
@@ -1341,6 +1452,25 @@
         });
       }
       return ["아직 시각화된 데이터가 없어 프롬프트 기준의 분석 방향만 제안합니다."];
+    }
+
+
+    function getAnalysisContext() {
+      const helpers = window.PublicDataDashboard.AnalysisHelpers;
+      const context = {
+        prompt: mainPrompt,
+        keyword: getEffectiveKeyword(),
+        dataset: selectedDataset,
+        resource: selectedResource,
+        resourcePreview: resourcePreviewResult,
+        visualization: visualizationResult,
+        insights: visualizationResult && visualizationResult.insights,
+        additionalPrompt,
+        additionalPrompts,
+        isDemoMode: Boolean(isDemoMode),
+      };
+      context.followUpQuestions = helpers && helpers.deriveFollowUpQuestions ? helpers.deriveFollowUpQuestions(context) : [];
+      return context;
     }
 
     return page;

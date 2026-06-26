@@ -742,3 +742,41 @@ python scripts/smoke_api_flow.py --base-url http://127.0.0.1:8000 --live-data-go
 - preview/visualize unsupported: resource 카드의 format과 `unsupported_reason`을 봅니다. CSV/TSV/JSON만 원격 자동 처리하고 Excel은 직접 업로드를 사용합니다.
 - resource private host blocked: localhost/private IP/link-local/multicast/reserved/unspecified host는 SSRF 방어로 차단되는 것이 정상입니다.
 - request timeout: 검증 상태 패널의 최근 endpoint 상태에서 timeout/오래 걸리는 요청을 확인하고, 백엔드 실행 상태와 외부 포털 연결 상태를 분리해 봅니다.
+
+## 시연 모드 사용법
+
+- 대시보드의 **오프라인 데모 → 데모 흐름으로 확인** 버튼은 실제 `data.go.kr` 호출이 아니라 frontend fixture 기반 시연 경로입니다.
+- 화면과 리포트에는 “데모 데이터 기반”, “오프라인 데모”, “실제 data.go.kr 결과 아님” 문구가 표시됩니다.
+- 다음 상황에서 사용하세요.
+  - Codespaces outbound/WAF 또는 포털 상태로 live `data.go.kr` 후보 검색/진단이 실패할 때
+  - 발표 중 네트워크가 불안정할 때
+  - 후보 선택 → 상세/resource → preview → visualize → 리포트 요약 흐름을 빠르게 설명할 때
+- demo mode는 기본값이 아니며 사용자가 버튼을 명시적으로 눌렀을 때만 현재 화면 상태를 fixture로 채웁니다.
+- demo mode는 API key, secret, serviceKey를 요구하거나 저장하지 않습니다.
+
+## 발표용 flow
+
+1. 로그인/회원가입 demo로 로컬 계정 흐름을 보여줍니다.
+2. 프롬프트 입력 화면에서 자연어 프롬프트를 입력합니다.
+3. `GOOGLE_API_KEY`가 없어도 fallback keyword로 계속 진행되는지 확인합니다.
+4. `data.go.kr 연결 확인` 버튼으로 live diagnostic이 opt-in임을 보여줍니다.
+5. live 후보 검색이 가능하면 후보를 사용하고, 실패하면 **데모 흐름으로 확인**을 눌러 오프라인 fixture 경로임을 설명합니다.
+6. dataset 후보를 선택해 상세 metadata와 resource 후보를 확인합니다.
+7. resource preview로 일부 행과 content-type/bytes metadata를 확인합니다.
+8. resource visualize 또는 직접 CSV/XLS/XLSX 업로드로 차트/표를 확인합니다.
+9. **분석 리포트 요약** 패널에서 prompt/keyword/dataset/resource/preview/visualization/주의사항을 확인합니다.
+10. 추천 후속 질문 chip을 클릭해 추가 프롬프트 입력창에 채우고, 추가 프롬프트는 현재 화면 상태 재해석이며 자동 재검색이 아님을 설명합니다.
+11. **요약 복사**, **Markdown 다운로드**, **JSON 다운로드**로 제출/발표용 요약을 저장합니다.
+12. validation panel의 최근 endpoint 상태에서 pending/timeout이 남지 않았는지 확인합니다.
+
+## 최종 제출 체크리스트
+
+- secret/API key/token이 repo에 없고 `.env`를 추가하지 않았는지 확인합니다.
+- frontend에 API key 입력 UI가 없는지 확인합니다.
+- `/api/health`가 live `data.go.kr` 호출을 하지 않는지 확인합니다.
+- 기본 smoke/test가 live `data.go.kr`를 호출하지 않고, live smoke는 `--live-data-go-kr` opt-in일 때만 실행되는지 확인합니다.
+- 배포/Codespaces에서는 `ALLOWED_ORIGINS`에 frontend origin을 포함합니다.
+- Codespaces Ports 탭에서 backend/frontend port가 Public인지 확인합니다.
+- localStorage API base URL override는 `PUBLIC_DATA_API_BASE_URL`만 사용하고, 잘못 설정했으면 제거 후 새로고침합니다.
+- live `data.go.kr` 실패 시 오프라인 데모 경로로 전체 UX를 검증합니다.
+- 원격 Excel 또는 API key/serviceKey 필요 resource는 직접 CSV/XLS/XLSX 업로드 대안 경로로 안내합니다.

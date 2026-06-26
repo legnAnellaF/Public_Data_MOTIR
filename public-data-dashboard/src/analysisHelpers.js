@@ -112,6 +112,24 @@
     return items.slice(0, 6);
   }
 
+  const SENSITIVE_QUERY_KEYS = new Set(["servicekey", "apikey", "api_key", "secret", "token", "authkey", "access_token", "refresh_token"]);
+
+  function sanitizeUrl(value) {
+    const text = String(value || "").trim();
+    if (!text) return "";
+    try {
+      const url = new URL(text);
+      Array.from(url.searchParams.keys()).forEach((key) => {
+        if (SENSITIVE_QUERY_KEYS.has(String(key).toLowerCase())) {
+          url.searchParams.set(key, "[REDACTED]");
+        }
+      });
+      return url.toString().replace(/%5BREDACTED%5D/gi, "[REDACTED]");
+    } catch (error) {
+      return text.replace(/([?&](?:serviceKey|apiKey|api_key|secret|token|authKey|access_token|refresh_token)=)[^&\s]+/gi, "$1[REDACTED]");
+    }
+  }
+
   function summarize(value, maxLength) {
     const text = String(value || "").replace(/\s+/g, " ").trim();
     return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
@@ -169,6 +187,98 @@
     return comments;
   }
 
+  function buildVisualizationSummary(visualization) {
+    const source = visualization && typeof visualization === "object" ? visualization : {};
+    const table = source.table_data && typeof source.table_data === "object" ? source.table_data : {};
+    const stats = extractVisualizationStats(source);
+    return {
+      chart_type: source.chart_type || "미정",
+      labels_count: Array.isArray(source.labels) ? source.labels.length : 0,
+      datasets_count: Array.isArray(source.datasets) ? source.datasets.length : 0,
+      table_rows_count: Array.isArray(table.rows) ? table.rows.length : 0,
+      max: stats && stats.max,
+      min: stats && stats.min,
+    };
+  }
+
+  function deriveFollowUpQuestions({ prompt, keyword, dataset, resource, resourcePreview, visualization, additionalPrompt, additionalPrompts }) {
+    const text = [prompt, keyword, latestAdditional(additionalPrompt, additionalPrompts), dataset && dataset.title, resource && resource.name].filter(Boolean).join(" ");
+    const preview = resourcePreview && resourcePreview.preview;
+    const headers = preview && Array.isArray(preview.headers) ? preview.headers.join(" ") : "";
+    const support = resource ? getResourceSupportState(resource) : null;
+    const questions = [];
+    function add(q) { if (q && !questions.includes(q) && questions.length < 5) questions.push(q); }
+    if (/지역|시군구|구별|동별|서울|부산|경기/.test(`${text} ${headers}`)) {
+      add("지역별 상위/하위 차이가 큰 이유를 추가로 확인할까요?");
+      add("연도별 변화 추세를 지역별로 비교할까요?");
+    }
+    if (/연도|년도|년|월|일|date|time|기준/.test(`${text} ${headers}`)) add("최근 연도 기준으로 증가/감소 추세를 볼까요?");
+    if (dataset && (dataset.provider || dataset.title)) add("같은 제공기관의 다른 관련 데이터도 찾아볼까요?");
+    if (visualization) {
+      add("최대값과 최소값 항목을 중심으로 비교할까요?");
+      add("이상치로 보이는 항목을 확인할까요?");
+    } else if (preview) {
+      add("이 리소스를 시각화해볼까요?");
+    }
+    if (support && (!support.isPreviewable || !support.isVisualizable)) add("직접 파일 업로드 경로로 분석해볼까요?");
+    add("현재 결과의 해석 주의사항을 발표용 문장으로 정리할까요?");
+    add("추가로 필요한 컬럼이나 결측 가능성을 확인할까요?");
+    return questions.slice(0, 5);
+  }
+
+  function buildReportSummaryMarkdown(context) {
+    const c = context && typeof context === "object" ? context : {};
+    const dataset = c.dataset || {};
+    const resource = c.resource || {};
+    const previewSummary = summarizeResourcePreview(c.resourcePreview) || "preview 없음";
+    const viz = buildVisualizationSummary(c.visualization);
+    const comments = deriveDataComment(c).slice(0, 3);
+    const followUps = c.followUpQuestions || deriveFollowUpQuestions(c);
+    const mode = c.isDemoMode ? "데모 데이터 기반(오프라인 fixture, 실제 data.go.kr 결과 아님)" : "실제/사용자 선택 흐름";
+    return [
+      `# 공공데이터 분석 리포트 요약`,
+      ``,
+      `- 모드: ${mode}`,
+      `- 최초 프롬프트: ${c.prompt || "-"}`,
+      `- 사용 키워드: ${c.keyword || deriveFallbackKeyword(c.prompt) || "-"}`,
+      `- 선택 데이터셋: ${titleOf(dataset, "-")} / 제공기관: ${dataset.provider || "-"} / 형식: ${dataset.format || "-"}`,
+      `- 선택 리소스: ${titleOf(resource, "-")} / 형식: ${resource.format || "-"} / URL: ${sanitizeUrl(resource.url || "") || "-"}`,
+      `- Preview summary: ${previewSummary}`,
+      `- Visualization summary: chart_type=${viz.chart_type}, labels=${viz.labels_count}, datasets=${viz.datasets_count}, table_rows=${viz.table_rows_count}${viz.max ? `, max=${viz.max.label}(${viz.max.value}), min=${viz.min.label}(${viz.min.value})` : ""}`,
+      ``,
+      `## 데이터 코멘트 요약`,
+      ...comments.map((item) => `- ${item}`),
+      ``,
+      `## 후속 질문 추천`,
+      ...followUps.map((item) => `- ${item}`),
+      ``,
+      `## 주의사항`,
+      `- live data.go.kr 연결은 Codespaces outbound/WAF/포털 상태에 영향을 받을 수 있습니다.`,
+      `- API key/serviceKey가 필요한 resource는 자동 preview/visualize가 제한될 수 있습니다.`,
+      `- 원격 Excel은 직접 CSV/XLS/XLSX 업로드 경로를 사용하세요.`,
+      `- preview는 일부 행만 표시합니다.`,
+      `- 원인 단정이 아니라 현재 데이터의 관찰값입니다.`,
+    ].join("\n");
+  }
+
+  function buildReportSummaryJson(context) {
+    const c = context && typeof context === "object" ? context : {};
+    const dataset = c.dataset || {};
+    const resource = c.resource || {};
+    return {
+      mode: c.isDemoMode ? "offline-demo-fixture" : "standard-flow",
+      prompt: c.prompt || "",
+      keyword: c.keyword || deriveFallbackKeyword(c.prompt),
+      dataset: { title: dataset.title || "", provider: dataset.provider || "", format: dataset.format || "" },
+      resource: { name: resource.name || resource.title || "", format: resource.format || "", source_url: sanitizeUrl(resource.url || "") },
+      preview_summary: summarizeResourcePreview(c.resourcePreview),
+      visualization_summary: buildVisualizationSummary(c.visualization),
+      data_comment_summary: deriveDataComment(c).slice(0, 3),
+      follow_up_questions: c.followUpQuestions || deriveFollowUpQuestions(c),
+      cautions: ["live data.go.kr 연결 상태는 외부 네트워크/WAF 영향을 받을 수 있음", "API key/serviceKey resource 제한", "remote Excel은 직접 업로드 권장", "preview는 일부 행", "현재 데이터 관찰값"]
+    };
+  }
+
   window.PublicDataDashboard.AnalysisHelpers = {
     deriveFallbackKeyword,
     deriveAnalysisOutline,
@@ -177,5 +287,10 @@
     summarizeVisualizationMetadata,
     getResourceSupportState,
     getKeywordText,
+    sanitizeUrl,
+    buildVisualizationSummary,
+    deriveFollowUpQuestions,
+    buildReportSummaryMarkdown,
+    buildReportSummaryJson,
   };
 })();
