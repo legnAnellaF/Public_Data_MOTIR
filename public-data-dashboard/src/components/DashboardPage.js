@@ -33,6 +33,11 @@
     visualizationError,
     onDatasetFileChange,
     onVisualizationSubmit,
+    apiBaseUrl,
+    apiBaseUrlSource,
+    apiHealth,
+    onApiConnectionCheck,
+    onApiBaseUrlSave,
     onNewPrompt,
     onLogout,
   }) {
@@ -79,10 +84,82 @@
     const rightColumn = document.createElement("div");
     rightColumn.className = "dashboard-column right-column";
 
-    leftColumn.append(createOutlinePanel(mainPrompt), createAdditionalPromptPanel());
+    leftColumn.append(createApiConnectionPanel(), createOutlinePanel(mainPrompt), createAdditionalPromptPanel());
     rightColumn.append(createDatasetSearchPanel(), createVisualizationPanel(), createCommentPanel(mainPrompt));
     layout.append(leftColumn, rightColumn);
     page.append(header, layout);
+
+
+    function createApiConnectionPanel() {
+      const wrapper = document.createElement("div");
+      wrapper.className = "api-connection-panel";
+
+      const baseLabel = document.createElement("p");
+      baseLabel.className = "api-base-url";
+      baseLabel.textContent = `현재 API base URL: ${apiBaseUrl || "설정 없음"}`;
+
+      const source = document.createElement("p");
+      source.className = "muted-text compact";
+      source.textContent = `설정 출처: ${apiBaseUrlSource || "unknown"}`;
+
+      const status = document.createElement("p");
+      const health = apiHealth && typeof apiHealth === "object" ? apiHealth : {};
+      status.className = `api-health-status ${health.status || "idle"}`;
+      status.textContent = getApiHealthMessage(health);
+
+      const actions = document.createElement("div");
+      actions.className = "api-connection-actions";
+
+      const checkButton = document.createElement("button");
+      checkButton.type = "button";
+      checkButton.className = "ghost-button";
+      checkButton.textContent = health.status === "checking" ? "확인 중..." : "API 연결 다시 확인";
+      checkButton.disabled = health.status === "checking";
+      checkButton.addEventListener("click", () => onApiConnectionCheck());
+
+      actions.appendChild(checkButton);
+
+      const form = document.createElement("form");
+      form.className = "api-base-url-form";
+      const input = document.createElement("input");
+      input.type = "url";
+      input.placeholder = "https://YOUR-BACKEND-URL";
+      input.value = apiBaseUrl || "";
+      input.setAttribute("aria-label", "Backend API base URL");
+      const saveButton = document.createElement("button");
+      saveButton.type = "submit";
+      saveButton.className = "primary-button";
+      saveButton.textContent = "URL 적용";
+      form.append(input, saveButton);
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        onApiBaseUrlSave(input.value);
+      });
+
+      const hint = document.createElement("p");
+      hint.className = "muted-text compact";
+      hint.textContent = "백엔드 URL만 입력하세요. API key나 secret은 프론트엔드에 저장하지 않습니다.";
+
+      wrapper.append(baseLabel, source, status, actions, form, hint);
+      return window.PublicDataDashboard.Panel({
+        title: "API 연결 상태",
+        children: wrapper,
+        className: "api-connection-shell",
+      });
+    }
+
+    function getApiHealthMessage(health) {
+      if (health.status === "success") {
+        return `/api/health 성공: ${health.message || "연결됨"}`;
+      }
+      if (health.status === "error") {
+        return `/api/health 실패: ${health.message || "백엔드 API에 연결할 수 없습니다. API base URL과 배포 상태를 확인하세요."}`;
+      }
+      if (health.status === "checking") {
+        return health.message || "/api/health 확인 중...";
+      }
+      return "/api/health 미확인: 버튼을 눌러 연결 상태를 확인하세요.";
+    }
 
     function createOutlinePanel(prompt) {
       const promptBlock = document.createElement("div");

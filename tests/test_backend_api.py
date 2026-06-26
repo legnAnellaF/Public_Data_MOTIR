@@ -3,7 +3,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from backend.app import app
+from backend.app import LOCALHOST_ORIGINS, app, parse_allowed_origins
 
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -16,7 +16,33 @@ def test_health():
     response = client.get("/api/health")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["app"] == "Public Data MOTIR API"
+    assert "environment" in body
+
+
+def test_parse_allowed_origins_includes_localhost_and_env_origins():
+    origins, allow_credentials = parse_allowed_origins("https://front.example, https://preview.example/")
+
+    assert allow_credentials is True
+    assert "http://localhost:5173" in origins
+    assert "https://front.example" in origins
+    assert "https://preview.example" in origins
+
+
+def test_parse_allowed_origins_explicit_wildcard_disables_credentials():
+    origins, allow_credentials = parse_allowed_origins("*")
+
+    assert origins == ["*"]
+    assert allow_credentials is False
+
+
+def test_parse_allowed_origins_default_localhost_only():
+    origins, allow_credentials = parse_allowed_origins("")
+
+    assert origins == LOCALHOST_ORIGINS
+    assert allow_credentials is True
 
 
 def test_keywords_without_google_api_key_returns_safe_error(monkeypatch):

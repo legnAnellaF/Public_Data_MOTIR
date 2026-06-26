@@ -523,3 +523,98 @@ python scripts/smoke_api_flow.py --base-url http://127.0.0.1:8000
 ```bash
 python scripts/smoke_api_flow.py --base-url http://127.0.0.1:8000 --live-data-go-kr --query "서울 부동산 가격"
 ```
+
+## 배포/런타임 연결 진단 가이드
+
+이번 저장소는 정적 frontend와 FastAPI backend를 별도로 배포할 수 있습니다. 실제 사이트에서 CSV 업로드 분석 또는 공공데이터 검색이 동작하지 않으면 먼저 frontend가 올바른 backend URL을 바라보는지, backend CORS가 frontend origin을 허용하는지 확인해야 합니다.
+
+### Local/Codespaces 실행
+
+백엔드는 저장소 루트에서 실행합니다.
+
+```bash
+uvicorn backend.app:app --reload --port 8000
+```
+
+정적 frontend는 별도 터미널에서 실행합니다.
+
+```bash
+cd public-data-dashboard
+python -m http.server 5173
+```
+
+브라우저에서 `http://localhost:5173`을 열고 대시보드의 **API 연결 상태** 영역에서 현재 API base URL과 `/api/health` 결과를 확인합니다.
+
+### Static frontend 배포 시 backend URL 설정
+
+frontend 기본 backend URL은 `http://localhost:8000`입니다. 배포 사이트에서는 실제 backend URL을 아래 중 하나로 설정합니다.
+
+1. 정적 호스팅에 `public-data-dashboard/config.example.js`를 참고해 별도의 `config.js`를 만들고, frontend HTML보다 먼저 로드되도록 설정합니다. 실제 배포 URL은 예시 파일에 하드코딩하지 않습니다.
+
+```javascript
+window.PUBLIC_DATA_API_BASE_URL = "https://YOUR-BACKEND-URL";
+```
+
+2. 긴급 점검 또는 preview 환경에서는 브라우저 개발자 도구 Console에서 localStorage override를 설정할 수 있습니다.
+
+```javascript
+localStorage.setItem("PUBLIC_DATA_API_BASE_URL", "https://YOUR-BACKEND-URL");
+location.reload();
+```
+
+localStorage override를 지우려면 다음을 실행합니다.
+
+```javascript
+localStorage.removeItem("PUBLIC_DATA_API_BASE_URL");
+location.reload();
+```
+
+frontend에는 `PUBLIC_DATA_API_KEY`, data.go.kr 인증키, `GOOGLE_API_KEY`, secret/token을 넣지 않습니다. backend URL만 설정합니다.
+
+### Backend 배포 시 필요한 환경변수
+
+키워드 추출과 공공데이터포털 live 호출이 필요한 backend 배포 환경에는 서버 환경변수로만 값을 설정합니다. `.env` 파일이나 실제 키는 커밋하지 않습니다.
+
+```bash
+GOOGLE_API_KEY=your-server-side-google-key
+PUBLIC_DATA_API_KEY=your-server-side-data-go-kr-key
+PUBLIC_DATA_PORTAL_BASE_URL=https://api.odcloud.kr/api
+APP_ENV=production
+```
+
+`/api/health`는 빠른 상태 확인용이며 data.go.kr live 접근을 직접 호출하지 않습니다.
+
+### CORS 설정
+
+backend는 localhost 개발 origin을 기본 허용합니다. 배포 frontend origin은 comma-separated `ALLOWED_ORIGINS`로 추가합니다.
+
+```bash
+ALLOWED_ORIGINS=https://your-frontend-site.com,https://another-preview-url.com
+```
+
+보안상 `*`를 기본 허용하지 않습니다. 개발 편의를 위해 명시적으로 `ALLOWED_ORIGINS=*`를 설정한 경우에만 wildcard를 사용하며, 이때 credentials는 비활성화됩니다. 운영 배포에서는 실제 frontend origin을 명시하세요.
+
+### 실제 사이트 점검 순서
+
+1. 대시보드의 **API 연결 상태**가 success인지 확인합니다.
+2. CSV 업로드 분석(`/api/visualize`)을 확인합니다.
+3. 공공데이터 검색(`/api/datasets/search`)을 확인합니다.
+4. 후보 선택/detail(`/api/datasets/detail`)을 확인합니다.
+5. resource preview(`/api/datasets/resource/preview`)를 확인합니다.
+6. resource visualize(`/api/datasets/resource/visualize`)를 확인합니다.
+
+배포 provider의 outbound 정책, 방화벽, WAF, data.go.kr의 차단/제한 때문에 live data.go.kr 접근이 실패할 수 있습니다. live smoke가 실패하더라도 frontend는 무한 loading에 빠지면 안 되며, “백엔드 API에 연결할 수 없습니다. API base URL과 배포 상태를 확인하세요.” 또는 endpoint별 실패 메시지를 보여야 합니다.
+
+### Smoke script
+
+기본 smoke는 외부 data.go.kr live 호출에 의존하지 않고 `/api/health`와 CSV 업로드 분석만 확인합니다.
+
+```bash
+python scripts/smoke_api_flow.py --base-url http://127.0.0.1:8000
+```
+
+live data.go.kr 검색까지 확인할 때만 명시적으로 opt-in 합니다.
+
+```bash
+python scripts/smoke_api_flow.py --base-url http://127.0.0.1:8000 --live-data-go-kr
+```

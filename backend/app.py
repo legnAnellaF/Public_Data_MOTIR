@@ -39,12 +39,38 @@ LOCALHOST_ORIGINS = [
     "http://localhost:8000",
     "http://127.0.0.1:8000",
 ]
+APP_NAME = "Public Data MOTIR API"
+APP_ENV = os.getenv("APP_ENV", os.getenv("ENVIRONMENT", "local"))
 
-app = FastAPI(title="Public Data MOTIR API")
+
+def parse_allowed_origins(value: str | None, default_origins: list[str] | None = None) -> tuple[list[str], bool]:
+    """Parse comma-separated CORS origins from ALLOWED_ORIGINS.
+
+    Returns (origins, allow_credentials). Localhost origins remain enabled by
+    default. A wildcard is honored only when explicitly configured and disables
+    credentials because browsers reject wildcard+credentials CORS.
+    """
+    origins = list(default_origins or LOCALHOST_ORIGINS)
+    raw_items = [item.strip() for item in (value or "").split(",") if item.strip()]
+
+    if "*" in raw_items:
+        return ["*"], False
+
+    for origin in raw_items:
+        normalized = origin.rstrip("/")
+        if normalized and normalized not in origins:
+            origins.append(normalized)
+
+    return origins, True
+
+
+CORS_ALLOW_ORIGINS, CORS_ALLOW_CREDENTIALS = parse_allowed_origins(os.getenv("ALLOWED_ORIGINS"))
+
+app = FastAPI(title=APP_NAME)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=LOCALHOST_ORIGINS,
-    allow_credentials=True,
+    allow_origins=CORS_ALLOW_ORIGINS,
+    allow_credentials=CORS_ALLOW_CREDENTIALS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -170,8 +196,8 @@ def _visualize_temp_file(temp_path: str, query: str, core_keyword: str) -> dict[
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
-    """Return a lightweight API health check."""
-    return {"status": "ok"}
+    """Return a lightweight API health check without external network calls."""
+    return {"status": "ok", "app": APP_NAME, "environment": APP_ENV}
 
 
 @app.post("/api/keywords")

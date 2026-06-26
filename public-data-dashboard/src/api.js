@@ -5,14 +5,44 @@
   const API_BASE_URL_OVERRIDE_KEY = "PUBLIC_DATA_API_BASE_URL";
   const DEFAULT_REQUEST_TIMEOUT_MS = 30000;
 
+  function normalizeApiBaseUrl(value) {
+    const text = typeof value === "string" ? value.trim() : "";
+    return text ? text.replace(/\/+$/, "") : "";
+  }
+
   function getApiBaseUrl() {
-    const windowOverride = typeof window.PUBLIC_DATA_API_BASE_URL === "string"
-      ? window.PUBLIC_DATA_API_BASE_URL.trim()
-      : "";
-    const storageOverride = readStorageOverride();
+    const windowOverride = normalizeApiBaseUrl(window.PUBLIC_DATA_API_BASE_URL);
+    const storageOverride = normalizeApiBaseUrl(readStorageOverride());
     const baseUrl = windowOverride || storageOverride || DEFAULT_API_BASE_URL;
 
-    return baseUrl.replace(/\/+$/, "");
+    return normalizeApiBaseUrl(baseUrl);
+  }
+
+  function getApiBaseUrlSource() {
+    if (normalizeApiBaseUrl(window.PUBLIC_DATA_API_BASE_URL)) {
+      return "window.PUBLIC_DATA_API_BASE_URL";
+    }
+
+    if (normalizeApiBaseUrl(readStorageOverride())) {
+      return "localStorage.PUBLIC_DATA_API_BASE_URL";
+    }
+
+    return "default";
+  }
+
+  function setStoredApiBaseUrl(value) {
+    const normalized = normalizeApiBaseUrl(value);
+    try {
+      if (normalized) {
+        localStorage.setItem(API_BASE_URL_OVERRIDE_KEY, normalized);
+      } else {
+        localStorage.removeItem(API_BASE_URL_OVERRIDE_KEY);
+      }
+    } catch (error) {
+      throw new Error("브라우저 저장소에 API base URL을 저장할 수 없습니다.");
+    }
+    console.info(`[PublicDataDashboard] API base URL set to: ${getApiBaseUrl()}`);
+    return getApiBaseUrl();
   }
 
   function readStorageOverride() {
@@ -94,7 +124,8 @@
       if (error && error.name === "AbortError") {
         throw new Error("요청 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.");
       }
-      throw new Error(`백엔드 API 연결 실패: ${toUserMessage(error, "네트워크 오류")}`);
+      const baseUrl = getApiBaseUrl();
+      throw new Error(`백엔드 API에 연결할 수 없습니다. API base URL과 배포 상태를 확인하세요. (${baseUrl}) ${toUserMessage(error, "네트워크 오류")}`);
     } finally {
       clearTimeout(timeoutId);
     }
@@ -206,11 +237,15 @@
     });
   }
 
+  console.info(`[PublicDataDashboard] API base URL: ${getApiBaseUrl()} (${getApiBaseUrlSource()})`);
+
   window.PublicDataDashboard.Api = {
     DEFAULT_API_BASE_URL,
     API_BASE_URL_OVERRIDE_KEY,
     DEFAULT_REQUEST_TIMEOUT_MS,
     getApiBaseUrl,
+    getApiBaseUrlSource,
+    setStoredApiBaseUrl,
     checkApiHealth,
     extractKeywords,
     searchDatasets,
