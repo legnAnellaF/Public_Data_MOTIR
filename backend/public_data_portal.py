@@ -237,13 +237,25 @@ def _node_links(node: dict[str, Any]) -> list[dict[str, str]]:
     return links
 
 
+_CURRENT_DETAIL_PATH_RE = re.compile(r"^/data/\d+/(?:fileData|apiData|standardData)\.do$", re.IGNORECASE)
+
+
+def _is_current_data_go_kr_detail_url(url: str) -> bool:
+    parsed = urlsplit(url)
+    return _CURRENT_DETAIL_PATH_RE.match(parsed.path or "") is not None
+
+
 def _pick_detail_link(node: dict[str, Any]) -> str:
-    for link in _node_links(node):
+    links = _node_links(node)
+    for link in links:
+        href = link["href"]
+        if _is_current_data_go_kr_detail_url(href):
+            return href
+    for link in links:
         href = link["href"]
         blob = f"{href} {link.get('text','')} {link.get('title','')}"
         if any(token in blob for token in ("selectDataSet", "selectFileData", "selectApiData", "dtst", "publicDataPk", "dataSetSn")):
             return href
-    links = _node_links(node)
     return links[0]["href"] if links else ""
 
 
@@ -259,9 +271,14 @@ def parse_data_go_kr_search_html(html: str, query: str) -> DatasetSearchResult:
     root = _parse_html(html)
     candidates: list[dict[str, Any]] = []
     seen: set[str] = set()
+    item_class_re = re.compile(r"(?:^|[-_\s])(item|row|card|dataset|result)(?:[-_\s]|$)", re.IGNORECASE)
     for node in _iter_nodes(root):
+        tag = node.get("tag")
         cls = node.get("attrs", {}).get("class", "")
-        if not ("result-list" in cls or "data-list" in cls or "dataset" in cls or "result" in cls or node.get("tag") in {"li", "tr"}):
+        class_tokens = {token.lower() for token in re.split(r"\s+", cls.strip()) if token}
+        if "result-list" in class_tokens or "data-list" in class_tokens:
+            continue
+        if tag not in {"li", "tr"} and not item_class_re.search(cls):
             continue
         detail_url = _pick_detail_link(node)
         text = _node_text(node)
@@ -302,6 +319,7 @@ def parse_data_go_kr_search_html(html: str, query: str) -> DatasetSearchResult:
 def parse_data_go_kr_detail_html(html: str, detail_url: str = "") -> DatasetDetailResult:
     root = _parse_html(html)
     page_text = _node_text(root)
+    declared_format = _extract_labeled_value(page_text, ("확장자", "제공형태", "파일형식", "포맷"))
     h_texts = [_node_text(n) for n in _iter_nodes(root) if n.get("tag") in {"h1", "h2", "h3"} and _node_text(n)]
     title = h_texts[0] if h_texts else _extract_labeled_value(page_text, ("파일데이터명", "오픈API명", "공공데이터명")) or "공공데이터 상세"
     resources: list[dict[str, Any]] = []
@@ -314,19 +332,42 @@ def parse_data_go_kr_detail_html(html: str, detail_url: str = "") -> DatasetDeta
         if href in seen or "javascript:" in href.lower():
             continue
         seen.add(href)
-        fmt = _infer_resource_format({"url": href, "name": link.get("text", "")})
+        fmt = _infer_resource_format({"url": href, "name": link.get("text", ""), "description": f"{link.get('title', '')} {page_text[:300]}", "format": declared_format})
         resources.append({"name": link.get("text") or link.get("title") or "리소스 후보", "format": fmt, "url": href, "description": "data.go.kr 상세 페이지에서 추출한 링크입니다.", "is_downloadable": fmt != "API", "is_api": fmt == "API"})
-    dataset = {"id": None, "title": title, "description": page_text[:1000], "provider": _extract_labeled_value(page_text, ("제공기관", "기관명")), "category": _extract_labeled_value(page_text, ("분류체계", "분류")), "format": _extract_labeled_value(page_text, ("확장자", "파일형식", "포맷")), "updated_at": _extract_labeled_value(page_text, ("수정일", "갱신일", "등록일")) or None, "url": detail_url}
+    dataset = {"id": None, "title": title, "description": page_text[:1000], "provider": _extract_labeled_value(page_text, ("제공기관", "기관명")), "category": _extract_labeled_value(page_text, ("분류체계", "분류")), "format": declared_format, "updated_at": _extract_labeled_value(page_text, ("수정일", "갱신일", "등록일")) or None, "url": detail_url}
     msg = "" if resources else "상세 페이지는 찾았지만 다운로드 URL을 자동 추출하지 못했습니다. 상세 페이지에서 직접 다운로드가 필요합니다."
     return DatasetDetailResult(status="success", dataset=dataset, resources=resources, message=msg)
 
 
 def _read_text_url(url: str) -> str:
     req = Request(url, headers={"Accept": "text/html,application/xhtml+xml", "User-Agent": "Mozilla/5.0 Public-Data-MOTIR/1.0"})
-    with urlopen(req, timeout=DATA_GO_KR_TIMEOUT_SECONDS) as response:  # noqa: S310 - fixed public portal URL/detail URL.
+    with urlopen(req, timeout=DATA_GO_KR_TIMEOUT_SECONDS) as response:  # noqa: S310 - fixed public portal search URL or pre-validated detail URL.
         raw = response.read()
         charset = response.headers.get_content_charset() or "utf-8"
         return raw.decode(charset, errors="replace")
+
+
+def validate_data_go_kr_detail_url(url: str) -> str:
+    """Allow only HTTPS data.go.kr detail pages before fetching user-selected detail URLs."""
+    cleaned = _clean_string(url)
+    parsed = urlsplit(cleaned)
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme != "https" or host not in {"www.data.go.kr", "data.go.kr"}:
+        raise ValueError("data.go.kr HTTPS 상세 URL만 호출할 수 있습니다.")
+    if not _is_safe_hostname(host):
+        raise ValueError("안전하지 않은 상세 URL host입니다.")
+    return cleaned
+
+
+def _read_data_go_kr_detail_url(url: str) -> tuple[str, str]:
+    safe_url = validate_data_go_kr_detail_url(url)
+    req = Request(safe_url, headers={"Accept": "text/html,application/xhtml+xml", "User-Agent": "Mozilla/5.0 Public-Data-MOTIR/1.0"})
+    with urlopen(req, timeout=DATA_GO_KR_TIMEOUT_SECONDS) as response:  # noqa: S310 - URL and redirect target are constrained to data.go.kr HTTPS.
+        final_url = response.geturl() if hasattr(response, "geturl") else safe_url
+        validate_data_go_kr_detail_url(final_url)
+        raw = response.read()
+        charset = response.headers.get_content_charset() or "utf-8"
+        return raw.decode(charset, errors="replace"), final_url
 
 
 def _first_value(source: dict[str, Any], keys: tuple[str, ...]) -> Any:
@@ -346,6 +387,11 @@ def _infer_resource_format(resource: dict[str, Any]) -> str:
     explicit = _first_text(resource, ("format", "fileFormat", "dataFormat", "mediaType", "type", "확장자"))
     if explicit:
         return explicit.upper()
+
+    text_blob = " ".join(_clean_string(_first_value(resource, keys)) for keys in (("name", "title", "resourceName", "fileName", "apiName", "서비스명", "파일명"), ("description", "desc", "summary", "contents", "설명"), ("linkText", "text", "titleText")))
+    for label in ("CSV", "TSV", "JSON", "XLSX", "XLS", "XML"):
+        if re.search(rf"(?<![A-Z0-9]){label}(?![A-Z0-9])", text_blob.upper()):
+            return label
 
     url = _clean_string(_first_value(resource, ("url", "downloadUrl", "apiUrl", "endpoint", "link", "다운로드URL", "APIURL")))
     lowered = url.lower().split("?")[0]
@@ -454,10 +500,12 @@ def fetch_dataset_detail(dataset_id_or_url: str) -> DatasetDetailResult:
     if not _looks_like_url(identifier):
         return DatasetDetailResult(status="error", dataset=None, resources=[], message="검색 결과의 data.go.kr 상세 URL이 필요합니다.")
     try:
-        html = _read_text_url(identifier)
+        html, final_url = _read_data_go_kr_detail_url(identifier)
+    except ValueError as exc:
+        return DatasetDetailResult(status="error", dataset={"title": "공공데이터 상세", "url": sanitize_url_for_response(identifier)}, resources=[], message=str(exc))
     except (HTTPError, URLError, TimeoutError, OSError):
         return DatasetDetailResult(status="error", dataset={"title": "공공데이터 상세", "url": sanitize_url_for_response(identifier)}, resources=[], message="공공데이터포털 상세 페이지 호출에 실패했습니다.")
-    return parse_data_go_kr_detail_html(html, sanitize_url_for_response(identifier))
+    return parse_data_go_kr_detail_html(html, sanitize_url_for_response(final_url))
 
 
 def _build_search_url(base_url: str, keyword: str, page: int, per_page: int, api_key: str) -> str:
