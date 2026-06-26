@@ -198,6 +198,7 @@
     promptSessions: storedPromptSessions,
     isKeywordLoading: false,
     keywordResult: null,
+    keywordFallback: "",
     keywordError: "",
     isDatasetSearchLoading: false,
     datasetSearchResult: null,
@@ -379,6 +380,7 @@
       promptSessions: readStoredPromptSessions(trimmedUserId),
       isKeywordLoading: false,
       keywordResult: null,
+      keywordFallback: "",
       keywordError: "",
       isDatasetSearchLoading: false,
       datasetSearchResult: null,
@@ -438,6 +440,7 @@
       promptSessions: {},
       isKeywordLoading: false,
       keywordResult: null,
+      keywordFallback: "",
       keywordError: "",
       isDatasetSearchLoading: false,
       datasetSearchResult: null,
@@ -478,6 +481,7 @@
       promptSessions: {},
       isKeywordLoading: false,
       keywordResult: null,
+      keywordFallback: "",
       keywordError: "",
       isDatasetSearchLoading: false,
       datasetSearchResult: null,
@@ -501,11 +505,14 @@
 
   function requestKeywordExtraction(prompt) {
     if (!window.PublicDataDashboard.Api) {
+      const fallbackKeyword = getFallbackKeyword(prompt);
       setState({
         isKeywordLoading: false,
         keywordResult: null,
-        keywordError: "백엔드 API 클라이언트를 불러오지 못했습니다.",
+        keywordFallback: fallbackKeyword,
+        keywordError: "AI 키워드 추출은 실패했지만 입력 프롬프트 기반 검색으로 계속 진행합니다.",
       });
+      requestDatasetSearch(fallbackKeyword || prompt);
       return;
     }
 
@@ -520,6 +527,7 @@
         setState({
           isKeywordLoading: false,
           keywordResult: result,
+          keywordFallback: "",
           keywordError: "",
         });
 
@@ -530,15 +538,15 @@
           return;
         }
 
+        const fallbackKeyword = getFallbackKeyword(requestedPrompt);
         setState({
           isKeywordLoading: false,
           keywordResult: null,
-          keywordError: error && error.message
-            ? error.message
-            : "백엔드 API 연결 실패 또는 키워드 추출 실패",
+          keywordFallback: fallbackKeyword,
+          keywordError: "AI 키워드 추출은 실패했지만 입력 프롬프트 기반 검색으로 계속 진행합니다.",
         });
 
-        requestDatasetSearch(requestedPrompt);
+        requestDatasetSearch(fallbackKeyword || requestedPrompt);
       })
       .finally(() => {
         if (state.mainPrompt === requestedPrompt && state.currentView === "dashboard" && state.isKeywordLoading) {
@@ -564,6 +572,7 @@
       promptSessions: nextSessions,
       isKeywordLoading: true,
       keywordResult: null,
+      keywordFallback: "",
       keywordError: "",
       isDatasetSearchLoading: false,
       datasetSearchResult: null,
@@ -597,6 +606,7 @@
       additionalPrompts: session.additionalPrompts || [],
       isKeywordLoading: true,
       keywordResult: null,
+      keywordFallback: "",
       keywordError: "",
       isDatasetSearchLoading: false,
       datasetSearchResult: null,
@@ -661,9 +671,21 @@
     });
   }
 
+  function getFallbackKeyword(prompt) {
+    const helpers = window.PublicDataDashboard.AnalysisHelpers;
+    return helpers && helpers.deriveFallbackKeyword
+      ? helpers.deriveFallbackKeyword(prompt)
+      : String(prompt || "").replace(/\s+/g, " ").trim();
+  }
+
   function getKeywordText(result) {
+    const helpers = window.PublicDataDashboard.AnalysisHelpers;
+    if (helpers && helpers.getKeywordText) {
+      return helpers.getKeywordText(result, state.keywordFallback, state.mainPrompt);
+    }
+
     if (!result || typeof result !== "object") {
-      return "";
+      return state.keywordFallback || getFallbackKeyword(state.mainPrompt);
     }
 
     if (typeof result.topic === "string") {
@@ -674,7 +696,7 @@
       return result.keywords.filter(Boolean).join(" ").trim();
     }
 
-    return "";
+    return state.keywordFallback || getFallbackKeyword(state.mainPrompt);
   }
 
   function requestDatasetSearch(keyword, options) {
@@ -895,7 +917,7 @@
   }
 
   function getCoreKeyword() {
-    return getKeywordText(state.keywordResult);
+    return getKeywordText(state.keywordResult) || state.keywordFallback || getFallbackKeyword(state.mainPrompt);
   }
 
   function handleDatasetFileChange(file) {
@@ -1062,6 +1084,7 @@
         onAdditionalPromptSubmit: handleAdditionalPromptSubmit,
         isKeywordLoading: state.isKeywordLoading,
         keywordResult: state.keywordResult,
+        keywordFallback: state.keywordFallback,
         keywordError: state.keywordError,
         isDatasetSearchLoading: state.isDatasetSearchLoading,
         datasetSearchResult: state.datasetSearchResult,
@@ -1098,6 +1121,7 @@
           mainPrompt: "",
           isKeywordLoading: false,
           keywordResult: null,
+          keywordFallback: "",
           keywordError: "",
           isDatasetSearchLoading: false,
           datasetSearchResult: null,

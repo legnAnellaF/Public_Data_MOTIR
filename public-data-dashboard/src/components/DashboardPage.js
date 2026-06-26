@@ -9,6 +9,7 @@
     onAdditionalPromptSubmit,
     isKeywordLoading,
     keywordResult,
+    keywordFallback,
     keywordError,
     isDatasetSearchLoading,
     datasetSearchResult,
@@ -195,7 +196,7 @@
       promptBlock.className = "prompt-summary";
 
       const promptLabel = document.createElement("span");
-      promptLabel.textContent = "최초 프롬포트";
+      promptLabel.textContent = "최초 프롬프트";
 
       const promptText = document.createElement("p");
       promptText.textContent = prompt;
@@ -204,19 +205,17 @@
 
       const note = document.createElement("p");
       note.className = "muted-text";
-      note.textContent = "추후 이 영역에는 입력 프롬포트 기반 자동 목차가 표시됩니다.";
+      note.textContent = "프롬프트, 키워드, 선택 데이터셋/resource, 시각화 결과, 추가 프롬프트를 반영해 갱신됩니다.";
 
       const keywordStatus = createKeywordStatusBlock();
 
       const list = document.createElement("ol");
       list.className = "outline-list";
-      ["키워드 분석", "관련 공공데이터 탐색", "통계 데이터 시각화", "종합 의견"].forEach(
-        (item) => {
-          const li = document.createElement("li");
-          li.textContent = item;
-          list.appendChild(li);
-        }
-      );
+      getAnalysisOutline().forEach((item) => {
+        const li = document.createElement("li");
+        li.textContent = item;
+        list.appendChild(li);
+      });
 
       return window.PublicDataDashboard.Panel({
         title: "분석 목차",
@@ -245,7 +244,8 @@
       }
 
       if (keywordError) {
-        return `백엔드 API 연결 실패 또는 키워드 추출 실패: ${keywordError}`;
+        const fallback = getEffectiveKeyword();
+        return `${keywordError}${fallback ? ` fallback keyword: ${fallback}` : ""}`;
       }
 
       const keywords = formatKeywordResult(keywordResult);
@@ -254,7 +254,11 @@
         return `추출 키워드: ${keywords}`;
       }
 
-      return "키워드 추출 결과가 아직 없습니다. 백엔드가 실행 중이면 프롬포트 제출 후 자동으로 표시됩니다.";
+      if (keywordFallback) {
+        return `fallback keyword: ${keywordFallback}`;
+      }
+
+      return "키워드 추출 결과가 아직 없습니다. 백엔드가 실행 중이면 프롬프트 제출 후 자동으로 표시됩니다.";
     }
 
     function formatKeywordResult(result) {
@@ -284,7 +288,7 @@
       conversation.append(
         ...createAdditionalPromptExchange(
           mainPrompt,
-          "최초 프롬포트를 기준으로 분석 목차, 시각화 영역, 데이터 코멘트 초안을 구성했습니다."
+          "최초 프롬프트를 기준으로 분석 목차, 시각화 영역, 데이터 코멘트 초안을 구성했습니다."
         )
       );
 
@@ -298,7 +302,7 @@
       const label = document.createElement("label");
       label.className = "sr-only";
       label.setAttribute("for", "additional-prompt");
-      label.textContent = "추가 프롬포트";
+      label.textContent = "추가 프롬프트";
 
       const textarea = document.createElement("textarea");
       textarea.id = "additional-prompt";
@@ -336,7 +340,7 @@
       wrapper.append(conversation, form);
 
       return window.PublicDataDashboard.Panel({
-        title: "추가 프롬포트 대화",
+        title: "추가 프롬프트 대화",
         children: wrapper,
         className: "conversation-panel-shell",
       });
@@ -355,7 +359,7 @@
     }
 
     function createAdditionalPromptReply(prompt) {
-      return `추가 요청 "${prompt}"을(를) 세션에 저장했습니다. 실제 데이터 재분석 응답은 추후 백엔드 API 연결 후 제공됩니다.`;
+      return `추가 요청 "${prompt}"을(를) 세션에 저장했고, 현재 데이터셋/resource/시각화 상태를 이 관점으로 다시 해석합니다. 새 검색이 필요하면 후보 검색 버튼을 눌러주세요.`;
     }
 
     function createDatasetSearchPanel() {
@@ -364,7 +368,7 @@
 
       const intro = document.createElement("p");
       intro.className = "muted-text compact";
-      intro.textContent = "키워드 기반 공공데이터포털 데이터셋 후보를 검색합니다. 이번 단계에서는 후보 표시와 선택만 지원합니다.";
+      intro.textContent = "공공데이터 후보 검색 → 후보 선택 → 상세/resource 확인 → 미리보기 → 이 리소스로 시각화 → 분석 코멘트 순서로 진행합니다.";
 
       const form = document.createElement("form");
       form.className = "dataset-search-form";
@@ -401,7 +405,7 @@
         return datasetSearchResult.query;
       }
 
-      const keywordText = formatKeywordResult(keywordResult);
+      const keywordText = getEffectiveKeyword();
       return keywordText || mainPrompt || "";
     }
 
@@ -442,7 +446,7 @@
       if (selectedDataset) {
         const notice = document.createElement("p");
         notice.className = "selected-dataset-notice";
-        notice.textContent = "실제 다운로드 및 자동 시각화 연결은 후속 작업입니다.";
+        notice.textContent = "선택한 후보의 상세/resource를 확인한 뒤 CSV/TSV/JSON은 ‘미리보기’ 또는 ‘이 리소스로 시각화’를 사용할 수 있습니다.";
         resultBox.appendChild(notice);
         resultBox.appendChild(createSelectedDatasetDetailBlock());
       }
@@ -800,7 +804,7 @@
       uploadCopy.className = "dataset-upload-copy";
 
       const uploadTitle = document.createElement("p");
-      uploadTitle.textContent = "분석할 데이터 파일 업로드";
+      uploadTitle.textContent = "직접 파일 업로드 (대안 경로)";
 
       const uploadHint = document.createElement("span");
       uploadHint.textContent = "지원 형식: .csv, .xlsx, .xls";
@@ -1181,27 +1185,65 @@
       const userBubble = document.createElement("div");
       userBubble.className = "chat-bubble user-bubble";
       userBubble.textContent = prompt;
+      wrapper.appendChild(userBubble);
 
-      const botBubble = document.createElement("div");
-      botBubble.className = "chat-bubble bot-bubble";
-      botBubble.textContent =
-        "입력한 프롬포트를 바탕으로 데이터 분석 코멘트가 이곳에 표시됩니다.";
+      getDataComments().forEach((comment) => {
+        const botBubble = document.createElement("div");
+        botBubble.className = "chat-bubble bot-bubble";
+        botBubble.textContent = comment;
+        wrapper.appendChild(botBubble);
+      });
 
       const keywordBubble = document.createElement("div");
       keywordBubble.className = `chat-bubble bot-bubble keyword-bubble ${keywordError ? "keyword-error" : ""}`.trim();
       keywordBubble.textContent = getKeywordMessage();
-
-      const botBubbleSecond = document.createElement("div");
-      botBubbleSecond.className = "chat-bubble bot-bubble muted-bubble";
-      botBubbleSecond.textContent =
-        "추후 이 영역에서는 그래프 해석, 데이터 경향, 종합 의견이 챗봇 형태로 출력됩니다.";
-
-      wrapper.append(userBubble, botBubble, keywordBubble, botBubbleSecond);
+      wrapper.appendChild(keywordBubble);
 
       return window.PublicDataDashboard.Panel({
         title: "데이터 코멘트",
         children: wrapper,
       });
+    }
+
+    function getEffectiveKeyword() {
+      const helpers = window.PublicDataDashboard.AnalysisHelpers;
+      if (helpers && helpers.getKeywordText) {
+        return helpers.getKeywordText(keywordResult, keywordFallback, mainPrompt);
+      }
+      return formatKeywordResult(keywordResult) || keywordFallback || mainPrompt || "";
+    }
+
+    function getAnalysisOutline() {
+      const helpers = window.PublicDataDashboard.AnalysisHelpers;
+      if (helpers && helpers.deriveAnalysisOutline) {
+        return helpers.deriveAnalysisOutline({
+          prompt: mainPrompt,
+          keyword: getEffectiveKeyword(),
+          dataset: selectedDataset,
+          resource: selectedResource,
+          visualization: visualizationResult,
+          additionalPrompt,
+          additionalPrompts,
+        });
+      }
+      return ["공공데이터 후보 탐색", "상세/resource 확인", "시각화 결과 해석", "데이터 한계 정리"];
+    }
+
+    function getDataComments() {
+      const helpers = window.PublicDataDashboard.AnalysisHelpers;
+      if (helpers && helpers.deriveDataComment) {
+        return helpers.deriveDataComment({
+          prompt: mainPrompt,
+          keyword: getEffectiveKeyword(),
+          dataset: selectedDataset,
+          resource: selectedResource,
+          visualization: visualizationResult,
+          insights: visualizationResult && visualizationResult.insights,
+          additionalPrompt,
+          additionalPrompts,
+        });
+      }
+      return ["아직 시각화된 데이터가 없어 프롬프트 기준의 분석 방향만 제안합니다."];
     }
 
     return page;
