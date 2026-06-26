@@ -36,7 +36,9 @@
     apiBaseUrl,
     apiBaseUrlSource,
     apiHealth,
+    dataPortalDiagnostic,
     onApiConnectionCheck,
+    onDataPortalDiagnosticCheck,
     onApiBaseUrlSave,
     onNewPrompt,
     onLogout,
@@ -119,6 +121,15 @@
 
       actions.appendChild(checkButton);
 
+      const portalButton = document.createElement("button");
+      portalButton.type = "button";
+      portalButton.className = "ghost-button";
+      const portalButtonState = dataPortalDiagnostic && typeof dataPortalDiagnostic === "object" ? dataPortalDiagnostic : {};
+      portalButton.textContent = portalButtonState.status === "checking" ? "data.go.kr 확인 중..." : "data.go.kr 연결 확인";
+      portalButton.disabled = portalButtonState.status === "checking";
+      portalButton.addEventListener("click", () => onDataPortalDiagnosticCheck());
+      actions.appendChild(portalButton);
+
       const form = document.createElement("form");
       form.className = "api-base-url-form";
       const input = document.createElement("input");
@@ -140,12 +151,30 @@
       hint.className = "muted-text compact";
       hint.textContent = "백엔드 URL만 입력하세요. API key나 secret은 프론트엔드에 저장하지 않습니다.";
 
-      wrapper.append(baseLabel, source, status, actions, form, hint);
+      const portalStatus = document.createElement("p");
+      const portalDiagnostic = dataPortalDiagnostic && typeof dataPortalDiagnostic === "object" ? dataPortalDiagnostic : {};
+      portalStatus.className = `api-health-status ${portalDiagnostic.status || "idle"}`;
+      portalStatus.textContent = getDataPortalDiagnosticMessage(portalDiagnostic);
+
+      wrapper.append(baseLabel, source, status, portalStatus, actions, form, hint);
       return window.PublicDataDashboard.Panel({
         title: "API 연결 상태",
         children: wrapper,
         className: "api-connection-shell",
       });
+    }
+
+    function getDataPortalDiagnosticMessage(diagnostic) {
+      if (diagnostic.status === "success") {
+        return `data.go.kr 연결 성공: ${diagnostic.message || "후보를 확인했습니다."}`;
+      }
+      if (diagnostic.status === "error") {
+        return `data.go.kr 연결 실패: ${diagnostic.message || "원인을 확인하려면 backend 로그를 확인하세요."}`;
+      }
+      if (diagnostic.status === "checking") {
+        return diagnostic.message || "data.go.kr 연결 확인 중...";
+      }
+      return "data.go.kr 미확인: 버튼을 누를 때만 live 진단을 실행합니다.";
     }
 
     function getApiHealthMessage(health) {

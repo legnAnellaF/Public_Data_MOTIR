@@ -217,6 +217,7 @@
     visualizationResult: null,
     visualizationError: "",
     apiHealth: { status: "idle", message: "아직 확인하지 않았습니다.", checkedAt: "" },
+    dataPortalDiagnostic: { status: "idle", message: "아직 확인하지 않았습니다.", checkedAt: "" },
   };
 
   if (storedCurrentUser && !hasStoredUser) {
@@ -272,6 +273,50 @@
           apiHealth: {
             status: "error",
             message: getConnectionFailureMessage(error, "백엔드 API에 연결할 수 없습니다. API base URL과 배포 상태를 확인하세요."),
+            checkedAt: new Date().toISOString(),
+          },
+        });
+      });
+  }
+
+  function checkDataPortalConnection() {
+    if (!window.PublicDataDashboard.Api || !window.PublicDataDashboard.Api.checkDataPortalDiagnostics) {
+      setState({
+        dataPortalDiagnostic: {
+          status: "error",
+          message: "data.go.kr 진단 API 클라이언트를 불러오지 못했습니다.",
+          checkedAt: new Date().toISOString(),
+        },
+      });
+      return;
+    }
+
+    setState({
+      dataPortalDiagnostic: {
+        status: "checking",
+        message: "data.go.kr 연결 확인 중...",
+        checkedAt: state.dataPortalDiagnostic.checkedAt || "",
+      },
+    });
+
+    window.PublicDataDashboard.Api.checkDataPortalDiagnostics(state.mainPrompt || "서울 부동산 가격")
+      .then((result) => {
+        const firstTitle = result && result.first_candidate && result.first_candidate.title ? ` · 첫 후보: ${result.first_candidate.title}` : "";
+        setState({
+          dataPortalDiagnostic: {
+            status: result && result.status === "success" ? "success" : "error",
+            message: result && result.status === "success"
+              ? `후보 ${result.candidate_count || 0}건${firstTitle}`
+              : `${result && result.reason_code ? result.reason_code : "DATA_PORTAL_ERROR"}: ${result && result.message ? result.message : "data.go.kr 연결 확인에 실패했습니다."}`,
+            checkedAt: new Date().toISOString(),
+          },
+        });
+      })
+      .catch((error) => {
+        setState({
+          dataPortalDiagnostic: {
+            status: "error",
+            message: getConnectionFailureMessage(error, "data.go.kr 연결 확인에 실패했습니다."),
             checkedAt: new Date().toISOString(),
           },
         });
@@ -1044,7 +1089,9 @@
         apiBaseUrl: window.PublicDataDashboard.Api ? window.PublicDataDashboard.Api.getApiBaseUrl() : "",
         apiBaseUrlSource: window.PublicDataDashboard.Api && window.PublicDataDashboard.Api.getApiBaseUrlSource ? window.PublicDataDashboard.Api.getApiBaseUrlSource() : "unknown",
         apiHealth: state.apiHealth,
+        dataPortalDiagnostic: state.dataPortalDiagnostic,
         onApiConnectionCheck: checkApiConnection,
+        onDataPortalDiagnosticCheck: checkDataPortalConnection,
         onApiBaseUrlSave: handleApiBaseUrlSave,
         onNewPrompt: () => setState({
           currentView: "prompt",
