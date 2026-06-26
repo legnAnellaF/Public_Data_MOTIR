@@ -323,14 +323,17 @@ def get_dataset_detail(request: DatasetDetailRequest) -> dict[str, Any]:
             "dataset_id 또는 url이 필요합니다. raw에 식별 가능한 id/url이 있어도 사용할 수 있습니다.",
         )
 
-    if isinstance(request.raw, dict) and request.raw:
-        return normalize_dataset_detail(request.raw).to_dict()
-
     result = fetch_dataset_detail(identifier)
     payload = result.to_dict()
-    if result.status != "success":
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=payload)
-    return payload
+    if result.status == "success":
+        return payload
+
+    if isinstance(request.raw, dict) and request.raw:
+        fallback = normalize_dataset_detail(request.raw).to_dict()
+        fallback["message"] = payload.get("message") or "상세 페이지 호출에 실패해 검색 결과 metadata를 표시합니다."
+        return fallback
+
+    raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=payload)
 
 
 @app.post("/api/visualize")

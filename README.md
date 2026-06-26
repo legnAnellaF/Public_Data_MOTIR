@@ -470,3 +470,56 @@ GitHub Actions의 `CI` workflow는 `main` 브랜치 push와 `main` 대상 pull r
 - API 키, `.env`, 개인 설정 파일은 커밋하지 않습니다.
 - `.gitignore`에 `.env`, `.env.*`, 가상환경, 빌드 산출물, Vercel 로컬 설정을 제외하도록 추가했습니다.
 - 업로드 파일은 저장소 내부에 저장하지 않고 API 처리 중 임시 파일로만 사용해야 합니다.
+
+## 실제 end-to-end 점검 절차
+
+이 프로젝트의 핵심 흐름은 정적 프론트엔드가 FastAPI 백엔드에 연결되어 CSV 업로드 분석과 data.go.kr 후보 검색을 수행하는 방식입니다. 더 이상 후보 표시만 하는 스켈레톤이 아니며, `/api/datasets/search`와 `/api/datasets/detail`은 공개 `https://www.data.go.kr/tcs/dss/selectDataSetList.do` 및 검색 결과의 상세 페이지 HTML을 요청해 후보/상세/리소스 링크를 정규화합니다.
+
+### 로컬 또는 Codespaces 실행
+
+1. 백엔드 실행
+
+   ```bash
+   uvicorn backend.app:app --reload --port 8000
+   ```
+
+2. 프론트엔드 실행
+
+   ```bash
+   cd public-data-dashboard
+   python -m http.server 5173
+   ```
+
+3. 브라우저에서 `http://127.0.0.1:5173`을 열고, 필요하면 `localStorage.PUBLIC_DATA_API_BASE_URL` 또는 `window.PUBLIC_DATA_API_BASE_URL`을 배포된 백엔드 URL로 설정합니다. 기본값은 `http://localhost:8000`입니다.
+
+### 기능별 확인
+
+- CSV 직접 업로드 분석: 대시보드 시각화 패널에서 `tests/fixtures/visualize_sample.csv`처럼 범주형 열과 숫자형 열이 있는 CSV/XLS/XLSX를 선택하고 **시각화 실행**을 누릅니다. 백엔드/프론트엔드 모두 timeout과 오류 응답 처리를 적용하므로 30초 내 성공 결과 또는 명확한 오류가 표시되어야 하며 “분석 중...” 상태가 무한히 남지 않아야 합니다.
+- data.go.kr 후보 검색: 프롬프트 또는 수동 검색어에 `서울 부동산 가격`, `광주 맛집`, `공영자전거` 등을 입력하면 백엔드가 data.go.kr 데이터목록 HTML을 요청해 title, description, provider, category, format, updated_at, detail URL, keywords를 추출합니다.
+- 후보 선택/detail 표시: 후보 카드의 선택 버튼을 누르면 검색 결과의 detail URL 또는 raw payload를 사용해 상세 정보를 표시합니다. 상세 페이지에서 다운로드/API 링크를 찾으면 `resources`에 표시하고, 찾지 못하면 “상세 페이지에서 직접 다운로드가 필요합니다” 안내와 상세 페이지 링크를 제공합니다.
+- resource preview: 리소스 URL이 있는 CSV/TSV/JSON 후보만 사용자가 버튼을 누른 뒤 제한된 byte 범위로 미리보기합니다. URL이 없거나 미지원 형식이면 버튼이 비활성화되거나 명확한 안내가 표시됩니다.
+- resource visualize: 사용자가 **이 리소스로 시각화**를 누른 경우에만 원격 CSV/TSV/JSON을 가져와 기존 시각화 엔진으로 분석합니다. 원격 Excel은 안전상 자동 분석하지 않으며 직접 파일 업로드를 사용해야 합니다.
+
+### API key 필요 여부
+
+- `PUBLIC_DATA_API_KEY`: data.go.kr HTML 검색/detail fallback에는 필요하지 않습니다. 인증이 필요한 개별 OpenAPI 리소스를 사용자가 직접 호출하려는 경우에만 해당 API 문서에 맞는 키가 필요할 수 있으며, 실제 키는 서버 환경 변수 또는 사용자의 안전한 런타임 설정에만 둬야 합니다.
+- `GOOGLE_API_KEY`: `/api/keywords`에서 Gemini 기반 키워드 추출을 사용하려면 필요합니다. 키가 없거나 외부 AI 호출이 실패해도 프론트엔드는 원래 프롬프트로 data.go.kr 검색을 계속 시도하고 loading을 해제합니다.
+
+### data.go.kr HTML 파싱 한계
+
+공개 HTML 구조를 파싱하는 fallback이므로 data.go.kr의 마크업이 크게 바뀌면 일부 필드 또는 리소스 URL 자동 추출이 실패할 수 있습니다. 이 경우에도 API는 JSON 오류 또는 빈 결과/안내 메시지를 반환하고, 프론트엔드는 무한 loading 대신 오류 메시지를 표시합니다. 실제 배포 사이트 점검은 백엔드 배포 URL, CORS 허용 origin, 프론트엔드 API base URL 설정을 맞춘 뒤 수행하세요.
+
+### Smoke checks
+
+기본 smoke는 외부 포털을 호출하지 않습니다.
+
+```bash
+uvicorn backend.app:app --host 127.0.0.1 --port 8000
+python scripts/smoke_api_flow.py --base-url http://127.0.0.1:8000
+```
+
+실제 data.go.kr live smoke는 명시적으로 opt-in 해야 합니다.
+
+```bash
+python scripts/smoke_api_flow.py --base-url http://127.0.0.1:8000 --live-data-go-kr --query "서울 부동산 가격"
+```

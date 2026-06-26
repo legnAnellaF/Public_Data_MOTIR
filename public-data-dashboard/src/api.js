@@ -3,6 +3,7 @@
 
   const DEFAULT_API_BASE_URL = "http://localhost:8000";
   const API_BASE_URL_OVERRIDE_KEY = "PUBLIC_DATA_API_BASE_URL";
+  const DEFAULT_REQUEST_TIMEOUT_MS = 30000;
 
   function getApiBaseUrl() {
     const windowOverride = typeof window.PUBLIC_DATA_API_BASE_URL === "string"
@@ -74,16 +75,28 @@
   }
 
   async function requestJson(path, options) {
-    const fallbackMessage = options && options.fallbackMessage
-      ? options.fallbackMessage
+    const requestOptions = options || {};
+    const fallbackMessage = requestOptions.fallbackMessage
+      ? requestOptions.fallbackMessage
       : "API 요청 처리 중 오류가 발생했습니다.";
+    const timeoutMs = Number(requestOptions.timeoutMs || DEFAULT_REQUEST_TIMEOUT_MS);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    const fetchOptions = { ...requestOptions, signal: controller.signal };
+    delete fetchOptions.fallbackMessage;
+    delete fetchOptions.timeoutMs;
 
     let response;
 
     try {
-      response = await fetch(`${getApiBaseUrl()}${path}`, options);
+      response = await fetch(`${getApiBaseUrl()}${path}`, fetchOptions);
     } catch (error) {
+      if (error && error.name === "AbortError") {
+        throw new Error("요청 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.");
+      }
       throw new Error(`백엔드 API 연결 실패: ${toUserMessage(error, "네트워크 오류")}`);
+    } finally {
+      clearTimeout(timeoutId);
     }
 
     const payload = await readJsonResponse(response, fallbackMessage);
@@ -196,6 +209,7 @@
   window.PublicDataDashboard.Api = {
     DEFAULT_API_BASE_URL,
     API_BASE_URL_OVERRIDE_KEY,
+    DEFAULT_REQUEST_TIMEOUT_MS,
     getApiBaseUrl,
     checkApiHealth,
     extractKeywords,
