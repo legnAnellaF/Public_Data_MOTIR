@@ -1113,6 +1113,7 @@
         apiBaseUrlSource: window.PublicDataDashboard.Api && window.PublicDataDashboard.Api.getApiBaseUrlSource ? window.PublicDataDashboard.Api.getApiBaseUrlSource() : "unknown",
         apiHealth: state.apiHealth,
         dataPortalDiagnostic: state.dataPortalDiagnostic,
+        apiRequestHistory: window.PublicDataDashboard.Api && window.PublicDataDashboard.Api.getRequestHistory ? window.PublicDataDashboard.Api.getRequestHistory() : [],
         onApiConnectionCheck: checkApiConnection,
         onDataPortalDiagnosticCheck: checkDataPortalConnection,
         onApiBaseUrlSave: handleApiBaseUrlSave,
