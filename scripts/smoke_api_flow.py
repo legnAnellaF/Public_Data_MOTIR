@@ -42,10 +42,14 @@ def get_json(base: str, path: str, timeout: int = 30) -> dict:
     return response.json()
 
 
-def post_json(base: str, path: str, payload: dict, timeout: int = 30) -> dict:
+def post_json_response(base: str, path: str, payload: dict, timeout: int = 30) -> requests.Response:
     url = f"{base}{path}"
     response = request_or_explain("POST", url, json=payload, timeout=timeout)
     print(f"{path} -> HTTP {response.status_code}")
+    return response
+
+def post_json(base: str, path: str, payload: dict, timeout: int = 30) -> dict:
+    response = post_json_response(base, path, payload, timeout=timeout)
     if response.status_code >= 400:
         print(response.text[:500])
         response.raise_for_status()
@@ -85,6 +89,17 @@ def main() -> int:
     if not body.get("datasets"):
         raise RuntimeError("visualize returned no datasets")
 
+    keyword_response = post_json_response(base, "/api/keywords", {"prompt": args.query}, timeout=20)
+    if keyword_response.status_code == 503:
+        print("/api/keywords -> 503 (frontend fallback expected when GOOGLE_API_KEY is not configured)")
+    elif keyword_response.status_code >= 500:
+        print(keyword_response.text[:500])
+        keyword_response.raise_for_status()
+    elif keyword_response.status_code >= 400:
+        print(f"/api/keywords returned non-fatal client error: {keyword_response.text[:300]}")
+    else:
+        print("/api/keywords OK")
+
     if args.live_data_go_kr:
         diagnostics = get_json(base, f"/api/diagnostics/data-portal?query={requests.utils.quote(args.query)}", timeout=15)
         print(
@@ -101,10 +116,25 @@ def main() -> int:
         search = post_json(base, "/api/datasets/search", {"keyword": args.query, "page": 1, "per_page": 10}, timeout=30)
         if not search.get("items"):
             raise RuntimeError(f"live data.go.kr search returned no candidates (reason_code={search.get('reason_code')})")
-        first = search["items"][0]
-        if not (first.get("url") or first.get("detail_url")):
-            raise RuntimeError("first candidate has no detail URL")
-        print("live candidate:", first.get("title"), first.get("url") or first.get("detail_url"), "reason_code=", search.get("reason_code"))
+        candidates = [item for item in search["items"][:5] if item.get("url") or item.get("detail_url")]
+        if not candidates:
+            raise RuntimeError("top live candidates have no detail URL")
+        first = candidates[0]
+        detail_url = first.get("url") or first.get("detail_url")
+        print("live candidate:", first.get("title"), detail_url, "reason_code=", search.get("reason_code"))
+        detail = post_json(base, "/api/datasets/detail", {"dataset_id": first.get("id"), "url": detail_url, "raw": first.get("raw") or first}, timeout=30)
+        resources = detail.get("resources") or []
+        supported = [r for r in resources if r.get("is_previewable") or r.get("is_visualizable")]
+        print(f"live detail resources={len(resources)} supported={len(supported)}")
+        if supported:
+            selected = supported[0]
+            preview_resp = post_json_response(base, "/api/datasets/resource/preview", {"resource": selected, "max_rows": 5}, timeout=20)
+            print("live preview status=", preview_resp.status_code, "reason_code=", (preview_resp.json() if preview_resp.content else {}).get("reason_code"))
+            if preview_resp.status_code < 400 and selected.get("is_visualizable"):
+                viz_resp = post_json_response(base, "/api/datasets/resource/visualize", {"resource": selected, "query": args.query, "core_keyword": args.query}, timeout=40)
+                print("live visualize status=", viz_resp.status_code, "reason_code=", (viz_resp.json() if viz_resp.content else {}).get("reason_code"))
+        else:
+            print("live search/detail succeeded but no previewable resource was found; this is a portal/resource support skip, not a default smoke failure")
     else:
         print("skip live data.go.kr smoke (pass --live-data-go-kr to enable)")
     return 0

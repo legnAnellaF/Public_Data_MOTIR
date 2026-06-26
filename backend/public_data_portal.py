@@ -38,7 +38,7 @@ RESOURCE_PREVIEW_MAX_BYTES = 256 * 1024
 RESOURCE_PREVIEW_TIMEOUT_SECONDS = 8
 RESOURCE_PREVIEW_DEFAULT_ROWS = 10
 RESOURCE_PREVIEW_MAX_ROWS = 20
-_RESOURCE_PREVIEW_SAFE_FIELDS = ("name", "format", "url", "description", "is_downloadable", "is_api")
+_RESOURCE_PREVIEW_SAFE_FIELDS = ("name", "format", "url", "description", "is_downloadable", "is_api", "is_previewable", "is_visualizable", "unsupported_reason", "source_hint")
 _SENSITIVE_QUERY_KEYS = {"key", "apikey", "api_key", "servicekey", "service_key", "token", "secret", "password"}
 
 
@@ -53,13 +53,17 @@ class ResourcePreviewResult:
     message: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "status": self.status,
             "resource": self.resource,
             "preview": self.preview,
             "metadata": self.metadata or {},
             "message": self.message,
         }
+        reason_code = (self.metadata or {}).get("reason_code")
+        if reason_code:
+            payload["reason_code"] = reason_code
+        return payload
 
 
 @dataclass(frozen=True)
@@ -300,16 +304,64 @@ def _pick_detail_link(node: dict[str, Any]) -> str:
 
 def _extract_labeled_value(text: str, labels: tuple[str, ...]) -> str:
     for label in labels:
-        m = re.search(rf"{re.escape(label)}\s*[:：]?\s*([^|·•\n]+?)(?=\s+(?:제공기관|분류체계|수정일|갱신일|파일데이터명|오픈API명|공공데이터명|확장자|키워드|다운로드)|$)", text)
+        m = re.search(rf"{re.escape(label)}\s*[:：]?\s*([^|·•\n]+?)(?=\s+(?:제공기관|기관명|분류체계|분류|수정일|갱신일|등록일|파일데이터명|오픈API명|공공데이터명|확장자|제공형태|파일형식|포맷|키워드|다운로드)|$)", text)
         if m:
             return m.group(1).strip(" -_/|·•")
     return ""
+
+_GENERIC_TITLES = {"데이터찾기", "목록", "상세보기", "다운로드", "활용신청", "로그인", "회원가입", "공유", "인쇄", "이전", "다음", "더보기", "미리보기"}
+_VISUAL_FORMATS = {"FILE", "CSV", "TSV", "JSON", "XLSX", "XLS", "XML"}
+
+def _query_tokens(query: str) -> list[str]:
+    return [t.lower() for t in re.split(r"\s+", _clean_string(query)) if len(t.strip()) > 1]
+
+def _is_generic_title(title: str) -> bool:
+    cleaned = re.sub(r"\s+", "", _clean_string(title))
+    return not cleaned or len(cleaned) < 3 or cleaned in _GENERIC_TITLES
+
+def _candidate_score(item: dict[str, Any], tokens: list[str]) -> tuple[int, list[str]]:
+    score = 0
+    reasons: list[str] = []
+    fields = {"title": 12, "provider": 5, "category": 4, "description": 2}
+    for field, weight in fields.items():
+        text = _clean_string(item.get(field)).lower()
+        matches = [token for token in tokens if token in text]
+        if matches:
+            score += weight * len(matches)
+            reasons.append(f"{field}:{','.join(matches[:3])}")
+    if _is_current_data_go_kr_detail_url(_clean_string(item.get("detail_url") or item.get("url"))):
+        score += 20
+        reasons.append("current_detail_url")
+    fmt = _clean_string(item.get("format")).upper()
+    dtype = _clean_string(item.get("data_type")).upper()
+    if any(label in fmt for label in _VISUAL_FORMATS) or dtype == "FILE":
+        score += 8
+        reasons.append("visualizable_format")
+    if dtype == "API":
+        score += 3
+        reasons.append("api_candidate")
+    return score, reasons
+
+def _dedupe_keys(item: dict[str, Any]) -> set[str]:
+    keys = set()
+    for value in (item.get("detail_url"), item.get("url")):
+        if value:
+            keys.add(f"url:{urlsplit(str(value)).path}?{urlsplit(str(value)).query}")
+    title_provider = f"tp:{_clean_string(item.get('title')).lower()}|{_clean_string(item.get('provider')).lower()}"
+    if title_provider != "tp:|":
+        keys.add(title_provider)
+    raw = item.get("raw") if isinstance(item.get("raw"), dict) else {}
+    for key in ("publicDataPk", "dataSetSn", "public_data_pk", "datasetId", "id"):
+        if raw.get(key):
+            keys.add(f"id:{raw[key]}")
+    return keys
 
 
 def parse_data_go_kr_search_html(html: str, query: str) -> DatasetSearchResult:
     root = _parse_html(html)
     candidates: list[dict[str, Any]] = []
-    seen: set[str] = set()
+    seen_keys: set[str] = set()
+    tokens = _query_tokens(query)
     item_class_re = re.compile(r"(?:^|[-_\s])(item|row|card|dataset|result)(?:[-_\s]|$)", re.IGNORECASE)
     for node in _iter_nodes(root):
         tag = node.get("tag")
@@ -321,40 +373,106 @@ def parse_data_go_kr_search_html(html: str, query: str) -> DatasetSearchResult:
             continue
         detail_url = _pick_detail_link(node)
         text = _node_text(node)
-        if not detail_url or len(text) < 8:
-            continue
-        if "selectDataSetList" in detail_url:
+        if not detail_url or len(text) < 8 or "selectDataSetList" in detail_url:
             continue
         title = ""
         for link in _node_links(node):
-            if link["href"] == detail_url and link.get("text"):
+            if link["href"] == detail_url and link.get("text") and not _is_generic_title(link["text"]):
                 title = link["text"]
                 break
         title = title or _extract_labeled_value(text, ("파일데이터명", "오픈API명", "공공데이터명", "서비스명")) or text[:80]
-        data_type = "FILE" if "파일데이터" in text or "FILE" in detail_url.upper() else ("API" if "오픈API" in text or "API" in detail_url.upper() else "UNKNOWN")
-        key = detail_url or title
-        if key in seen:
+        if _is_generic_title(title):
             continue
-        seen.add(key)
-        candidates.append({
-            "id": _extract_labeled_value(detail_url, ("publicDataPk", "dataSetSn")) or None,
+        data_type = "FILE" if "파일데이터" in text or "fileData" in detail_url else ("API" if "오픈API" in text or "apiData" in detail_url else ("STANDARD" if "standardData" in detail_url else "UNKNOWN"))
+        fmt = _extract_labeled_value(text, ("확장자", "파일형식", "포맷", "제공형태")) or data_type
+        item = {
+            "_order": len(candidates),
+            "id": None,
             "title": title.strip(),
             "description": text[:500],
             "provider": _extract_labeled_value(text, ("제공기관", "기관명")),
             "category": _extract_labeled_value(text, ("분류체계", "분류")),
-            "format": _extract_labeled_value(text, ("확장자", "파일형식", "포맷")) or data_type,
+            "format": fmt,
             "updated_at": _extract_labeled_value(text, ("수정일", "갱신일", "등록일")) or None,
             "url": detail_url,
             "detail_url": detail_url,
             "data_type": data_type,
-            "keywords": [kw for kw in re.split(r"\s+", query) if kw],
-            "raw": {"url": detail_url, "detailUrl": detail_url, "title": title, "description": text, "provider": _extract_labeled_value(text, ("제공기관", "기관명")), "format": _extract_labeled_value(text, ("확장자", "파일형식", "포맷")) or data_type, "data_type": data_type},
-        })
-        if len(candidates) >= 20:
-            break
+            "keywords": tokens,
+            "raw": {"url": detail_url, "detailUrl": detail_url, "title": title, "description": text, "provider": _extract_labeled_value(text, ("제공기관", "기관명")), "format": fmt, "data_type": data_type},
+        }
+        score, reasons = _candidate_score(item, tokens)
+        item["score"] = score
+        item["match_reasons"] = reasons
+        keys = _dedupe_keys(item)
+        if keys & seen_keys:
+            continue
+        seen_keys.update(keys)
+        candidates.append(item)
+    candidates.sort(key=lambda item: (-int(item.get("score") or 0), int(item.get("_order") or 0)))
+    for item in candidates:
+        item.pop("_order", None)
+    candidates = candidates[:20]
     return DatasetSearchResult(status="success", query=query, items=candidates, message="" if candidates else "검색 결과가 없거나 data.go.kr HTML 구조를 해석하지 못했습니다.")
 
 
+_RESOURCE_HINT_TOKENS = ("download", "file", "csv", "json", "excel", "xls", "api", "get", "openapi", "파일", "다운로드", "미리보기")
+_STATIC_EXTENSIONS = (".css", ".js", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".woff", ".woff2")
+
+def _extract_urls_from_text(text: str, base_url: str = DATA_GO_KR_ORIGIN) -> list[str]:
+    values: list[str] = []
+    for raw in re.findall(r"https?://[^\s'\")<>]+|/[A-Za-z0-9_./?=&%:-]+", text or ""):
+        cleaned = raw.strip("'\") ,;")
+        if cleaned.startswith("/") or cleaned.startswith("http"):
+            values.append(urljoin(base_url, cleaned))
+    return values
+
+def _looks_like_resource_url(url: str, context: str = "") -> bool:
+    parsed = urlsplit(url)
+    lowered = f"{parsed.path}?{parsed.query} {context}".lower()
+    if parsed.scheme not in {"http", "https"}:
+        return False
+    if any(parsed.path.lower().endswith(ext) for ext in _STATIC_EXTENSIONS):
+        return False
+    if any(token in lowered for token in _RESOURCE_HINT_TOKENS):
+        return True
+    return any(parsed.path.lower().endswith(ext) for ext in (".csv", ".tsv", ".json", ".xls", ".xlsx", ".xml"))
+
+def _resource_support(fmt: str, is_api: bool, url: str, context: str = "") -> dict[str, Any]:
+    upper = _clean_string(fmt).upper()
+    requires_key = bool(re.search(r"servicekey|apikey|api_key|인증키|활용신청", f"{url} {context}", re.IGNORECASE))
+    previewable = upper in {"CSV", "TSV", "JSON"} and not requires_key
+    visualizable = previewable
+    reason = ""
+    if requires_key:
+        reason = "API key가 필요한 리소스일 수 있어 자동 미리보기/시각화가 제한됩니다. 상세 페이지에서 확인하세요."
+    elif upper in {"XLS", "XLSX"}:
+        reason = "원격 Excel은 자동 분석하지 않으며 내려받은 뒤 직접 업로드하세요."
+    elif upper not in {"CSV", "TSV", "JSON"}:
+        reason = "CSV/TSV/JSON 리소스만 자동 미리보기/시각화를 지원합니다."
+    return {"is_previewable": previewable, "is_visualizable": visualizable, "unsupported_reason": reason, "requires_api_key": requires_key}
+
+def _normalize_format_label(fmt: str) -> str:
+    upper = _clean_string(fmt).upper()
+    for label in ("CSV", "TSV", "JSON", "XLSX", "XLS", "XML", "API"):
+        if label in upper:
+            return label
+    return upper or "UNKNOWN"
+
+def _make_resource(name: str, fmt: str, url: str, description: str, is_api: bool, source_hint: str, context: str = "") -> dict[str, Any]:
+    fmt = _normalize_format_label(fmt)
+    support = _resource_support(fmt, is_api, url, context)
+    return {
+        "name": name or "리소스 후보",
+        "format": fmt or "UNKNOWN",
+        "url": url,
+        "description": description,
+        "is_downloadable": bool(url) and not is_api,
+        "is_api": is_api,
+        "is_previewable": support["is_previewable"],
+        "is_visualizable": support["is_visualizable"],
+        "unsupported_reason": support["unsupported_reason"],
+        "source_hint": source_hint,
+    }
 def parse_data_go_kr_detail_html(html: str, detail_url: str = "") -> DatasetDetailResult:
     root = _parse_html(html)
     page_text = _node_text(root)
@@ -363,20 +481,36 @@ def parse_data_go_kr_detail_html(html: str, detail_url: str = "") -> DatasetDeta
     title = h_texts[0] if h_texts else _extract_labeled_value(page_text, ("파일데이터명", "오픈API명", "공공데이터명")) or "공공데이터 상세"
     resources: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for link in _node_links(root):
-        href = link["href"]
-        blob = f"{href} {link.get('text','')} {link.get('title','')}".lower()
-        if not any(token in blob for token in ("download", "file", ".csv", ".json", ".xls", "api", "get", "excel")):
+
+    for node in _iter_nodes(root):
+        attrs = node.get("attrs", {}) if isinstance(node.get("attrs"), dict) else {}
+        node_text = _node_text(node)
+        attr_blob = " ".join(str(v) for v in attrs.values())
+        context = f"{node_text} {attr_blob} {page_text[:300]}"
+        urls: list[tuple[str, str]] = []
+        href = attrs.get("href", "")
+        if href and not href.lower().startswith("javascript:"):
+            urls.append((urljoin(detail_url or DATA_GO_KR_ORIGIN, href), "href"))
+        for key, value in attrs.items():
+            if key.startswith("data-") or key in {"onclick", "value"}:
+                for extracted in _extract_urls_from_text(str(value), detail_url or DATA_GO_KR_ORIGIN):
+                    urls.append((extracted, key))
+        if not any(token in context.lower() for token in _RESOURCE_HINT_TOKENS):
             continue
-        if href in seen or "javascript:" in href.lower():
-            continue
-        seen.add(href)
-        fmt = _infer_resource_format({"url": href, "name": link.get("text", ""), "description": f"{link.get('title', '')} {page_text[:300]}", "format": declared_format})
-        resources.append({"name": link.get("text") or link.get("title") or "리소스 후보", "format": fmt, "url": href, "description": "data.go.kr 상세 페이지에서 추출한 링크입니다.", "is_downloadable": fmt != "API", "is_api": fmt == "API"})
+        for url, source_hint in urls:
+            if not _looks_like_resource_url(url, context):
+                continue
+            safe_key = sanitize_url_for_response(url)
+            if safe_key in seen:
+                continue
+            seen.add(safe_key)
+            fmt = _infer_resource_format({"url": url, "name": node_text, "description": context, "format": declared_format})
+            is_api = fmt.upper() == "API" or "api" in context.lower() or "openapi" in context.lower()
+            resources.append(_make_resource(node_text or attrs.get("title", "") or "리소스 후보", fmt, url, "data.go.kr 상세 페이지에서 추출한 링크입니다.", is_api, source_hint, context))
+
     dataset = {"id": None, "title": title, "description": page_text[:1000], "provider": _extract_labeled_value(page_text, ("제공기관", "기관명")), "category": _extract_labeled_value(page_text, ("분류체계", "분류")), "format": declared_format, "updated_at": _extract_labeled_value(page_text, ("수정일", "갱신일", "등록일")) or None, "url": detail_url}
     msg = "" if resources else "상세 페이지는 찾았지만 다운로드 URL을 자동 추출하지 못했습니다. 상세 페이지에서 직접 다운로드가 필요합니다."
     return DatasetDetailResult(status="success", dataset=dataset, resources=resources, message=msg)
-
 
 
 def _build_data_go_kr_search_url(keyword: str, page: int = 1, per_page: int = 10) -> str:
@@ -800,49 +934,73 @@ def _read_limited_response(response: Any, max_bytes: int) -> tuple[bytes, bool]:
     return data[:max_bytes], len(data) > max_bytes
 
 
+def _decode_public_data_bytes(raw_bytes: bytes) -> str:
+    for encoding in ("utf-8-sig", "cp949", "euc-kr"):
+        try:
+            return raw_bytes.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return raw_bytes.decode("utf-8-sig", errors="replace")
+
+
+def _sniff_delimiter(sample: str, fmt: str) -> str:
+    if fmt == "TSV":
+        return "\t"
+    try:
+        return csv.Sniffer().sniff(sample[:4096], delimiters=",\t;|").delimiter
+    except csv.Error:
+        return ","
+
+
+def _extract_tabular_json(payload: Any) -> list[dict[str, Any]] | None:
+    if isinstance(payload, list) and all(isinstance(row, dict) for row in payload):
+        return payload
+    if isinstance(payload, dict):
+        for key in ("data", "items", "records", "result", "results"):
+            value = payload.get(key)
+            if isinstance(value, list) and all(isinstance(row, dict) for row in value):
+                return value
+        response = payload.get("response")
+        if isinstance(response, dict):
+            body = response.get("body")
+            nested = _extract_tabular_json(body if body is not None else response)
+            if nested is not None:
+                return nested
+    return None
+
+
 def normalize_resource_preview(resource: dict[str, Any], raw_bytes: bytes, fmt: str, max_rows: int, truncated: bool) -> dict[str, Any]:
     """Parse a bounded byte sample into a frontend-friendly preview payload."""
-    text = raw_bytes.decode("utf-8-sig", errors="replace")
+    text = _decode_public_data_bytes(raw_bytes)
     row_limit = max(1, min(max_rows, RESOURCE_PREVIEW_MAX_ROWS))
 
     if fmt in {"CSV", "TSV"}:
-        delimiter = "\t" if fmt == "TSV" else ","
+        delimiter = _sniff_delimiter(text, fmt)
         sample = text.splitlines()[: row_limit + 2]
         rows = list(csv.reader(sample, delimiter=delimiter))
-        if not rows:
-            raise ValueError("미리보기할 행을 찾지 못했습니다.")
+        if not rows or not any(any(str(cell).strip() for cell in row) for row in rows):
+            raise ValueError("RESOURCE_EMPTY: 미리보기할 행을 찾지 못했습니다.")
         headers = [str(value) for value in rows[0]]
         body_rows = [[str(value) for value in row] for row in rows[1 : row_limit + 1]]
-        return {
-            "kind": "table",
-            "headers": headers,
-            "rows": body_rows,
-            "truncated": truncated or len(rows) > row_limit + 1,
-            "message": f"처음 {len(body_rows)}행만 표시합니다.",
-        }
+        return {"kind": "table", "headers": headers, "rows": body_rows, "truncated": truncated or len(rows) > row_limit + 1, "delimiter": delimiter, "message": f"처음 {len(body_rows)}행만 표시합니다."}
 
     if fmt == "JSON":
         payload = json.loads(text)
-        if isinstance(payload, list):
-            snippet = payload[:row_limit]
-            is_truncated = truncated or len(payload) > row_limit
-        elif isinstance(payload, dict):
-            snippet = dict(list(payload.items())[:row_limit])
-            is_truncated = truncated or len(payload) > row_limit
-        else:
-            snippet = payload
-            is_truncated = truncated
-        return {
-            "kind": "json",
-            "data": snippet,
-            "truncated": is_truncated,
-            "message": "JSON top-level 일부만 표시합니다.",
-        }
+        records = _extract_tabular_json(payload)
+        if records is None:
+            raise ValueError("RESOURCE_JSON_NOT_TABULAR: JSON을 표 형태로 변환할 수 없습니다.")
+        headers: list[str] = []
+        for row in records:
+            for key, value in row.items():
+                if key not in headers and isinstance(value, (str, int, float, bool, type(None))):
+                    headers.append(str(key))
+        if not headers:
+            raise ValueError("RESOURCE_JSON_NOT_TABULAR: JSON에서 표시 가능한 열을 찾지 못했습니다.")
+        return {"kind": "table", "headers": headers, "rows": [[str(row.get(key, "")) for key in headers] for row in records[:row_limit]], "truncated": truncated or len(records) > row_limit, "message": f"JSON 객체 배열에서 처음 {min(len(records), row_limit)}행만 표시합니다."}
 
     if fmt in {"XLS", "XLSX"}:
-        raise ValueError("원격 Excel 파일은 이번 단계에서 직접 파싱하지 않습니다. 파일을 내려받아 직접 업로드해 주세요.")
-    raise ValueError("CSV/TSV/JSON 리소스만 미리보기를 지원합니다.")
-
+        raise ValueError("RESOURCE_UNSUPPORTED_FORMAT: 원격 Excel 파일은 이번 단계에서 직접 파싱하지 않습니다. 파일을 내려받아 직접 업로드해 주세요.")
+    raise ValueError("RESOURCE_UNSUPPORTED_FORMAT: CSV/TSV/JSON 리소스만 미리보기를 지원합니다.")
 
 def fetch_resource_preview(resource: dict[str, Any], max_bytes: int = RESOURCE_PREVIEW_MAX_BYTES, max_rows: int = RESOURCE_PREVIEW_DEFAULT_ROWS) -> ResourcePreviewResult:
     """Fetch a small bounded preview for a validated external CSV/TSV/JSON resource."""
@@ -854,21 +1012,28 @@ def fetch_resource_preview(resource: dict[str, Any], max_bytes: int = RESOURCE_P
     try:
         with urlopen(request, timeout=RESOURCE_PREVIEW_TIMEOUT_SECONDS) as response:  # noqa: S310 - URL is validated against internal hosts and unsafe schemes.
             final_url = response.geturl() if hasattr(response, "geturl") else url
-            final_parsed = urlsplit(final_url)
-            if final_parsed.hostname and not _is_safe_hostname(final_parsed.hostname):
-                raise ValueError("redirect 대상 host가 안전하지 않습니다.")
+            try:
+                validate_resource_url({"url": final_url})
+            except ValueError as exc:
+                return ResourcePreviewResult(status="error", resource=safe_resource, preview=None, metadata={"reason_code": "RESOURCE_REDIRECT_BLOCKED", "source_url": sanitize_url_for_response(final_url)}, message=str(exc))
             content_type = response.headers.get("Content-Type", "") if getattr(response, "headers", None) else ""
             fmt = infer_resource_format({**source, "url": final_url}, content_type)
             raw_bytes, truncated = _read_limited_response(response, max_bytes)
     except ValueError:
         raise
-    except (HTTPError, URLError, TimeoutError, OSError):
-        return ResourcePreviewResult(status="error", resource=safe_resource, preview=None, metadata={}, message="resource URL 호출에 실패했습니다. URL, timeout 또는 접근 권한을 확인해 주세요.")
+    except HTTPError as exc:
+        return ResourcePreviewResult(status="error", resource=safe_resource, preview=None, metadata={"reason_code": "RESOURCE_FETCH_HTTP_ERROR", "http_status": exc.code}, message="resource URL 호출이 HTTP 오류를 반환했습니다.")
+    except TimeoutError:
+        return ResourcePreviewResult(status="error", resource=safe_resource, preview=None, metadata={"reason_code": "RESOURCE_FETCH_TIMEOUT"}, message="resource URL 호출 시간이 초과되었습니다.")
+    except (URLError, OSError):
+        return ResourcePreviewResult(status="error", resource=safe_resource, preview=None, metadata={"reason_code": "RESOURCE_FETCH_NETWORK_ERROR"}, message="resource URL 호출에 실패했습니다. URL, timeout 또는 접근 권한을 확인해 주세요.")
 
     try:
         preview = normalize_resource_preview(source, raw_bytes, fmt, max_rows, truncated)
     except (ValueError, json.JSONDecodeError, csv.Error, UnicodeError) as exc:
-        return ResourcePreviewResult(status="error", resource=safe_resource, preview=None, metadata={"content_type": content_type, "bytes_read": len(raw_bytes), "source_url": sanitize_url_for_response(final_url)}, message=str(exc))
+        message = str(exc)
+        reason = message.split(":", 1)[0] if message.startswith("RESOURCE_") else "RESOURCE_PARSE_ERROR"
+        return ResourcePreviewResult(status="error", resource=safe_resource, preview=None, metadata={"content_type": content_type, "bytes_read": len(raw_bytes), "source_url": sanitize_url_for_response(final_url), "reason_code": reason}, message=message.split(":", 1)[-1].strip() if message.startswith("RESOURCE_") else message)
 
     return ResourcePreviewResult(
         status="success",

@@ -50,7 +50,45 @@
     return list.length ? String(list[list.length - 1] || "").trim() : "";
   }
 
-  function deriveAnalysisOutline({ prompt, keyword, dataset, resource, visualization, additionalPrompt, additionalPrompts }) {
+  function summarizeResourcePreview(previewResult) {
+    const result = previewResult && typeof previewResult === "object" ? previewResult : {};
+    const preview = result.preview && typeof result.preview === "object" ? result.preview : null;
+    const meta = result.metadata && typeof result.metadata === "object" ? result.metadata : {};
+    if (!preview) {
+      return "";
+    }
+    if (preview.kind === "table") {
+      const rowCount = Array.isArray(preview.rows) ? preview.rows.length : 0;
+      const colCount = Array.isArray(preview.headers) ? preview.headers.length : 0;
+      return `preview 표 ${rowCount}행 ${colCount}열 · ${meta.content_type || "content-type 미상"} · ${meta.bytes_read || 0} bytes`;
+    }
+    return `preview ${preview.kind || "데이터"} · ${meta.content_type || "content-type 미상"} · ${meta.bytes_read || 0} bytes`;
+  }
+
+  function summarizeVisualizationMetadata(visualization) {
+    const source = visualization && typeof visualization === "object" ? visualization : {};
+    const meta = source.metadata && typeof source.metadata === "object" ? source.metadata : {};
+    const parts = [];
+    if (meta.source_url) parts.push("source URL 확인됨");
+    if (meta.resource_format) parts.push(`형식 ${meta.resource_format}`);
+    if (meta.content_type) parts.push(`content-type ${meta.content_type}`);
+    if (meta.bytes_read) parts.push(`${meta.bytes_read} bytes 분석`);
+    return parts.join(" · ");
+  }
+
+  function getResourceSupportState(resource) {
+    const item = resource && typeof resource === "object" ? resource : {};
+    const format = String(item.format || "").toUpperCase();
+    const url = String(item.url || "").toLowerCase().split("?")[0];
+    const supported = Boolean(item.url) && (item.is_previewable || format.includes("CSV") || format.includes("TSV") || format.includes("JSON") || url.endsWith(".csv") || url.endsWith(".tsv") || url.endsWith(".json"));
+    return {
+      isPreviewable: Boolean(item.is_previewable || supported),
+      isVisualizable: Boolean(item.is_visualizable || supported),
+      unsupportedReason: item.unsupported_reason || (supported ? "" : "CSV/TSV/JSON 리소스만 자동 지원합니다."),
+    };
+  }
+
+  function deriveAnalysisOutline({ prompt, keyword, dataset, resource, resourcePreview, visualization, additionalPrompt, additionalPrompts }) {
     const focus = keyword || deriveFallbackKeyword(prompt) || "입력 프롬프트";
     const latest = latestAdditional(additionalPrompt, additionalPrompts);
     const items = [`${focus} 관련 공공데이터 후보 탐색`];
@@ -61,6 +99,10 @@
     }
     if (resource) {
       items.push(`선택 리소스 ‘${titleOf(resource, "리소스 후보")}’ 미리보기 및 지원 형식 확인`);
+    }
+    const previewSummary = summarizeResourcePreview(resourcePreview);
+    if (previewSummary) {
+      items.push(`리소스 ${previewSummary} 기반 컬럼/표본 확인`);
     }
     items.push(visualization ? "시각화 결과의 주요 수치와 항목 비교" : "preview 또는 CSV 업로드 후 시각화 결과 확인");
     if (latest) {
@@ -90,7 +132,7 @@
     return { max, min, count: pairs.length, datasetLabel: firstDataset.label || "데이터셋" };
   }
 
-  function deriveDataComment({ prompt, keyword, dataset, resource, visualization, insights, additionalPrompt, additionalPrompts }) {
+  function deriveDataComment({ prompt, keyword, dataset, resource, resourcePreview, visualization, insights, additionalPrompt, additionalPrompts }) {
     const focus = keyword || deriveFallbackKeyword(prompt) || summarize(prompt, 30) || "입력 프롬프트";
     const latest = latestAdditional(additionalPrompt, additionalPrompts);
     const comments = [`현재 분석은 ‘${focus}’ 키워드와 최초 프롬프트를 기준으로 구성했습니다.`];
@@ -102,7 +144,17 @@
       comments.push(`선택한 데이터셋은 ‘${titleOf(dataset, "제목 없는 데이터셋")}’이며, provider/format/resource 정보를 먼저 확인하는 흐름입니다.`);
     }
     if (resource) {
-      comments.push(`선택한 리소스는 ‘${titleOf(resource, "리소스 후보")}’입니다. CSV/TSV/JSON이면 preview 후 명시적으로 시각화할 수 있습니다.`);
+      const support = getResourceSupportState(resource);
+      comments.push(`선택한 리소스는 ‘${titleOf(resource, "리소스 후보")}’입니다. 자동 미리보기 ${support.isPreviewable ? "가능" : "제한"}, 자동 시각화 ${support.isVisualizable ? "가능" : "제한"} 상태입니다.`);
+      if (support.unsupportedReason) comments.push(`미지원/주의 사유: ${support.unsupportedReason}`);
+    }
+    const previewSummary = summarizeResourcePreview(resourcePreview);
+    if (previewSummary) {
+      comments.push(`최근 리소스 미리보기 metadata: ${previewSummary}. 이 표본을 기준으로 컬럼 구조와 결측 가능성을 먼저 확인하세요.`);
+    }
+    const visualizationMeta = summarizeVisualizationMetadata(visualization);
+    if (visualizationMeta) {
+      comments.push(`시각화 입력 metadata: ${visualizationMeta}.`);
     }
     const stats = extractVisualizationStats(visualization);
     if (stats) {
@@ -121,6 +173,9 @@
     deriveFallbackKeyword,
     deriveAnalysisOutline,
     deriveDataComment,
+    summarizeResourcePreview,
+    summarizeVisualizationMetadata,
+    getResourceSupportState,
     getKeywordText,
   };
 })();
