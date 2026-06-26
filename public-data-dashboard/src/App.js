@@ -216,6 +216,7 @@
     isVisualizationLoading: false,
     visualizationResult: null,
     visualizationError: "",
+    apiHealth: { status: "idle", message: "아직 확인하지 않았습니다.", checkedAt: "" },
   };
 
   if (storedCurrentUser && !hasStoredUser) {
@@ -225,6 +226,84 @@
   function setState(nextState) {
     Object.assign(state, nextState);
     render();
+  }
+
+
+  function getConnectionFailureMessage(error, fallbackMessage) {
+    const message = error && error.message ? error.message : fallbackMessage;
+    if (message && message.includes("백엔드 API에 연결할 수 없습니다")) {
+      return message;
+    }
+    return message || fallbackMessage;
+  }
+
+  function checkApiConnection() {
+    if (!window.PublicDataDashboard.Api || !window.PublicDataDashboard.Api.checkApiHealth) {
+      setState({
+        apiHealth: {
+          status: "error",
+          message: "백엔드 API 클라이언트를 불러오지 못했습니다.",
+          checkedAt: new Date().toISOString(),
+        },
+      });
+      return;
+    }
+
+    setState({
+      apiHealth: {
+        status: "checking",
+        message: "백엔드 /api/health 확인 중...",
+        checkedAt: state.apiHealth.checkedAt || "",
+      },
+    });
+
+    window.PublicDataDashboard.Api.checkApiHealth()
+      .then((result) => {
+        setState({
+          apiHealth: {
+            status: "success",
+            message: `${result && result.app ? result.app : "API"} 연결 성공`,
+            checkedAt: new Date().toISOString(),
+          },
+        });
+      })
+      .catch((error) => {
+        setState({
+          apiHealth: {
+            status: "error",
+            message: getConnectionFailureMessage(error, "백엔드 API에 연결할 수 없습니다. API base URL과 배포 상태를 확인하세요."),
+            checkedAt: new Date().toISOString(),
+          },
+        });
+      });
+  }
+
+  function handleApiBaseUrlSave(value) {
+    if (!window.PublicDataDashboard.Api || !window.PublicDataDashboard.Api.setStoredApiBaseUrl) {
+      setState({
+        apiHealth: {
+          status: "error",
+          message: "API base URL 설정 클라이언트를 불러오지 못했습니다.",
+          checkedAt: new Date().toISOString(),
+        },
+      });
+      return;
+    }
+
+    try {
+      window.PublicDataDashboard.Api.setStoredApiBaseUrl(value);
+    } catch (error) {
+      setState({
+        apiHealth: {
+          status: "error",
+          message: error && error.message ? error.message : "API base URL 저장에 실패했습니다.",
+          checkedAt: new Date().toISOString(),
+        },
+      });
+      return;
+    }
+
+    checkApiConnection();
   }
 
   function handleLogin(userId, password) {
@@ -624,9 +703,7 @@
         setState({
           isDatasetSearchLoading: false,
           datasetSearchResult: null,
-          datasetSearchError: error && error.message
-            ? error.message
-            : "공공데이터 후보 검색에 실패했습니다.",
+          datasetSearchError: getConnectionFailureMessage(error, "공공데이터 후보 검색에 실패했습니다."),
           selectedDataset: null,
           isDatasetDetailLoading: false,
           datasetDetailResult: null,
@@ -701,9 +778,7 @@
         setState({
           isDatasetDetailLoading: false,
           datasetDetailResult: null,
-          datasetDetailError: error && error.message
-            ? error.message
-            : "선택한 데이터셋 상세 조회에 실패했습니다.",
+          datasetDetailError: getConnectionFailureMessage(error, "선택한 데이터셋 상세 조회에 실패했습니다."),
         });
       })
       .finally(() => {
@@ -764,7 +839,7 @@
         setState({
           isResourcePreviewLoading: false,
           resourcePreviewResult: null,
-          resourcePreviewError: error && error.message ? error.message : "선택한 리소스 미리보기에 실패했습니다.",
+          resourcePreviewError: getConnectionFailureMessage(error, "선택한 리소스 미리보기에 실패했습니다."),
         });
       })
       .finally(() => {
@@ -835,7 +910,7 @@
 
         setState({
           isResourceVisualizationLoading: false,
-          resourceVisualizationError: error && error.message ? error.message : "선택한 리소스 시각화에 실패했습니다.",
+          resourceVisualizationError: getConnectionFailureMessage(error, "선택한 리소스 시각화에 실패했습니다."),
         });
       })
       .finally(() => {
@@ -893,9 +968,7 @@
         setState({
           isVisualizationLoading: false,
           visualizationResult: null,
-          visualizationError: error && error.message
-            ? error.message
-            : "데이터 시각화 API 호출에 실패했습니다.",
+          visualizationError: getConnectionFailureMessage(error, "데이터 시각화 API 호출에 실패했습니다."),
         });
       })
       .finally(() => {
@@ -968,6 +1041,11 @@
         visualizationError: state.visualizationError,
         onDatasetFileChange: handleDatasetFileChange,
         onVisualizationSubmit: handleVisualizationSubmit,
+        apiBaseUrl: window.PublicDataDashboard.Api ? window.PublicDataDashboard.Api.getApiBaseUrl() : "",
+        apiBaseUrlSource: window.PublicDataDashboard.Api && window.PublicDataDashboard.Api.getApiBaseUrlSource ? window.PublicDataDashboard.Api.getApiBaseUrlSource() : "unknown",
+        apiHealth: state.apiHealth,
+        onApiConnectionCheck: checkApiConnection,
+        onApiBaseUrlSave: handleApiBaseUrlSave,
         onNewPrompt: () => setState({
           currentView: "prompt",
           mainPrompt: "",
