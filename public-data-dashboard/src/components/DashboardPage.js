@@ -368,7 +368,7 @@
 
       const intro = document.createElement("p");
       intro.className = "muted-text compact";
-      intro.textContent = "공공데이터 후보 검색 → 후보 선택 → 상세/resource 확인 → 미리보기 → 이 리소스로 시각화 → 분석 코멘트 순서로 진행합니다.";
+      intro.textContent = "4-step: 1) 후보 선택 → 2) 상세/resource 확인 → 3) 미리보기 → 4) 이 리소스로 시각화. 직접 파일 업로드는 대안 경로입니다.";
 
       const form = document.createElement("form");
       form.className = "dataset-search-form";
@@ -557,11 +557,18 @@
       description.className = "dataset-description";
       description.textContent = item.description || "설명이 제공되지 않았습니다.";
 
+      const support = getResourceSupport(item);
       const flags = document.createElement("p");
       flags.className = "resource-flags";
-      flags.textContent = `${item.is_downloadable ? "다운로드 후보" : "다운로드 여부 미확정"} · ${item.is_api ? "API 후보" : "파일/링크 후보"}`;
+      flags.textContent = `${item.is_downloadable ? "다운로드 후보" : "다운로드 여부 미확정"} · ${item.is_api ? "API 후보" : "파일/링크 후보"} · 자동 미리보기 ${support.isPreviewable ? "가능" : "제한"} · 자동 시각화 ${support.isVisualizable ? "가능" : "제한"}`;
 
       card.append(header, description, flags);
+      if (support.unsupportedReason) {
+        const unsupported = document.createElement("p");
+        unsupported.className = "resource-preview-hint";
+        unsupported.textContent = `미지원 사유: ${support.unsupportedReason}`;
+        card.appendChild(unsupported);
+      }
       if (item.url) {
         const previewButton = document.createElement("button");
         previewButton.type = "button";
@@ -728,6 +735,8 @@
       appendDatasetMeta(meta, "제공기관", dataset.provider || "미상");
       appendDatasetMeta(meta, "분류", dataset.category || "미분류");
       appendDatasetMeta(meta, "업데이트", dataset.updated_at || "날짜 없음");
+      if (dataset.score != null) appendDatasetMeta(meta, "score", String(dataset.score));
+      if (Array.isArray(dataset.match_reasons) && dataset.match_reasons.length) appendDatasetMeta(meta, "매칭", dataset.match_reasons.slice(0, 2).join(" / "));
 
       const actions = document.createElement("div");
       actions.className = "dataset-card-actions";
@@ -752,15 +761,24 @@
       return card;
     }
 
-    function isPreviewableResource(resource) {
+    function getResourceSupport(resource) {
+      const helpers = window.PublicDataDashboard.AnalysisHelpers;
+      if (helpers && helpers.getResourceSupportState) {
+        return helpers.getResourceSupportState(resource);
+      }
       const item = resource && typeof resource === "object" ? resource : {};
       const format = String(item.format || "").toUpperCase();
       const url = String(item.url || "").toLowerCase().split("?")[0];
-      return Boolean(item.url) && (format.includes("CSV") || format.includes("TSV") || format.includes("JSON") || url.endsWith(".csv") || url.endsWith(".tsv") || url.endsWith(".json"));
+      const supported = Boolean(item.url) && (format.includes("CSV") || format.includes("TSV") || format.includes("JSON") || url.endsWith(".csv") || url.endsWith(".tsv") || url.endsWith(".json"));
+      return { isPreviewable: supported, isVisualizable: supported, unsupportedReason: supported ? "" : "CSV/TSV/JSON 리소스만 자동 지원합니다." };
+    }
+
+    function isPreviewableResource(resource) {
+      return getResourceSupport(resource).isPreviewable;
     }
 
     function isVisualizableResource(resource) {
-      return isPreviewableResource(resource);
+      return getResourceSupport(resource).isVisualizable;
     }
 
     function isSameResource(left, right) {
@@ -1221,6 +1239,7 @@
           keyword: getEffectiveKeyword(),
           dataset: selectedDataset,
           resource: selectedResource,
+          resourcePreview: resourcePreviewResult,
           visualization: visualizationResult,
           additionalPrompt,
           additionalPrompts,
@@ -1237,6 +1256,7 @@
           keyword: getEffectiveKeyword(),
           dataset: selectedDataset,
           resource: selectedResource,
+          resourcePreview: resourcePreviewResult,
           visualization: visualizationResult,
           insights: visualizationResult && visualizationResult.insights,
           additionalPrompt,

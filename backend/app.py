@@ -27,6 +27,8 @@ from backend.public_data_portal import (
     infer_resource_format,
     normalize_dataset_detail,
     sanitize_url_for_response,
+    _decode_public_data_bytes,
+    _extract_tabular_json,
     validate_resource_url,
 )
 
@@ -113,11 +115,13 @@ class DatasetDetailRequest(BaseModel):
     raw: dict[str, Any] | None = Field(None, examples=[{}])
 
 
-def _safe_error(status_code: int, message: str, detail: str | None = None) -> HTTPException:
+def _safe_error(status_code: int, message: str, detail: str | None = None, reason_code: str | None = None) -> HTTPException:
     """Create a JSON API error without exposing secrets or provider internals."""
     payload: dict[str, str] = {"status": "error", "message": message}
     if detail:
         payload["detail"] = detail
+    if reason_code:
+        payload["reason_code"] = reason_code
     return HTTPException(status_code=status_code, detail=payload)
 
 
@@ -153,36 +157,35 @@ def _read_remote_resource_bytes(resource: dict[str, Any]) -> tuple[bytes, str, s
             raw = response.read(RESOURCE_VISUALIZE_MAX_BYTES + 1)
     except ValueError:
         raise
-    except (HTTPError, URLError, TimeoutError, OSError):
-        raise _safe_error(status.HTTP_502_BAD_GATEWAY, "resource URL 호출에 실패했습니다. URL, timeout 또는 접근 권한을 확인해 주세요.") from None
+    except HTTPError as exc:
+        raise _safe_error(status.HTTP_502_BAD_GATEWAY, "resource URL 호출이 HTTP 오류를 반환했습니다.", str(exc.code), "RESOURCE_FETCH_HTTP_ERROR") from None
+    except TimeoutError:
+        raise _safe_error(status.HTTP_504_GATEWAY_TIMEOUT, "resource URL 호출 시간이 초과되었습니다.", reason_code="RESOURCE_FETCH_TIMEOUT") from None
+    except (URLError, OSError):
+        raise _safe_error(status.HTTP_502_BAD_GATEWAY, "resource URL 호출에 실패했습니다. URL, timeout 또는 접근 권한을 확인해 주세요.", reason_code="RESOURCE_FETCH_NETWORK_ERROR") from None
 
     truncated = len(raw) > RESOURCE_VISUALIZE_MAX_BYTES
     if truncated:
-        raise _safe_error(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "원격 리소스가 허용된 크기보다 큽니다.", f"최대 {RESOURCE_VISUALIZE_MAX_BYTES} bytes까지만 분석합니다.")
+        raise _safe_error(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "원격 리소스가 허용된 크기보다 큽니다.", f"최대 {RESOURCE_VISUALIZE_MAX_BYTES} bytes까지만 분석합니다.", "RESOURCE_TOO_LARGE")
     return raw, fmt, content_type, sanitize_url_for_response(final_url), truncated
 
 
 def _json_records_to_csv_bytes(raw_bytes: bytes) -> bytes:
-    payload = json.loads(raw_bytes.decode("utf-8-sig", errors="replace"))
-    if isinstance(payload, dict):
-        for key in ("data", "items", "records", "result", "results"):
-            value = payload.get(key)
-            if isinstance(value, list):
-                payload = value
-                break
-    if not isinstance(payload, list) or not payload or not all(isinstance(row, dict) for row in payload):
-        raise ValueError("JSON을 표 형태로 변환할 수 없습니다. 객체 배열 또는 data/items/records 배열만 지원합니다.")
+    payload = json.loads(_decode_public_data_bytes(raw_bytes))
+    records = _extract_tabular_json(payload)
+    if not records:
+        raise ValueError("RESOURCE_JSON_NOT_TABULAR: JSON을 표 형태로 변환할 수 없습니다.")
     headers = []
-    for row in payload:
+    for row in records:
         for key in row:
             if key not in headers and isinstance(row.get(key), (str, int, float, bool, type(None))):
                 headers.append(str(key))
     if not headers:
-        raise ValueError("JSON에서 CSV로 변환할 열을 찾지 못했습니다.")
+        raise ValueError("RESOURCE_JSON_NOT_TABULAR: JSON에서 CSV로 변환할 열을 찾지 못했습니다.")
     out = io.StringIO(newline="")
     writer = csv.DictWriter(out, fieldnames=headers, extrasaction="ignore")
     writer.writeheader()
-    for row in payload:
+    for row in records:
         writer.writerow({key: row.get(key, "") for key in headers})
     out.seek(0)
     return out.getvalue().encode("utf-8-sig")
@@ -314,14 +317,14 @@ def visualize_dataset_resource(request: DatasetResourceVisualizeRequest) -> dict
     try:
         raw_bytes, fmt, content_type, source_url, _ = _read_remote_resource_bytes(resource)
         if fmt in {"XLS", "XLSX"}:
-            raise _safe_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "원격 Excel 자동 분석은 아직 지원하지 않으며 파일 업로드를 사용하세요.")
+            raise _safe_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "원격 Excel 자동 분석은 아직 지원하지 않으며 파일 업로드를 사용하세요.", reason_code="RESOURCE_UNSUPPORTED_FORMAT")
         if fmt not in RESOURCE_VISUALIZE_SUPPORTED_FORMATS:
-            raise _safe_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "CSV/TSV/JSON 리소스만 자동 시각화를 지원합니다.")
+            raise _safe_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "CSV/TSV/JSON 리소스만 자동 시각화를 지원합니다.", reason_code="RESOURCE_UNSUPPORTED_FORMAT")
 
         suffix = ".tsv" if fmt == "TSV" else ".csv"
         data_bytes = raw_bytes
         if fmt == "TSV":
-            text = raw_bytes.decode("utf-8-sig", errors="replace")
+            text = _decode_public_data_bytes(raw_bytes)
             rows = csv.reader(text.splitlines(), delimiter="	")
             temp_text = io.StringIO(newline="")
             writer = csv.writer(temp_text)
@@ -333,7 +336,9 @@ def visualize_dataset_resource(request: DatasetResourceVisualizeRequest) -> dict
             try:
                 data_bytes = _json_records_to_csv_bytes(raw_bytes)
             except (ValueError, json.JSONDecodeError, UnicodeError) as exc:
-                raise _safe_error(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from None
+                msg = str(exc)
+                reason = msg.split(":", 1)[0] if msg.startswith("RESOURCE_") else "RESOURCE_PARSE_ERROR"
+                raise _safe_error(status.HTTP_422_UNPROCESSABLE_ENTITY, msg.split(":", 1)[-1].strip() if msg.startswith("RESOURCE_") else msg, reason_code=reason) from None
 
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
             temp_path = temp_file.name

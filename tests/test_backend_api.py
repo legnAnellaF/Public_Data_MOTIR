@@ -577,7 +577,7 @@ def test_resource_preview_csv_success_with_mocked_client(monkeypatch):
 
 def test_resource_preview_json_success_with_mocked_client(monkeypatch):
     def fake_urlopen(request, timeout=0):
-        return FakePreviewResponse(b'{"a": 1, "b": [2, 3]}', "application/json", "https://example.test/data.json")
+        return FakePreviewResponse(b'{"items": [{"a": 1, "b": 2}]}', "application/json", "https://example.test/data.json")
 
     monkeypatch.setattr("backend.public_data_portal.urlopen", fake_urlopen)
     monkeypatch.setattr("backend.public_data_portal._is_safe_hostname", lambda hostname: True)
@@ -589,8 +589,8 @@ def test_resource_preview_json_success_with_mocked_client(monkeypatch):
 
     assert response.status_code == 200
     body = response.json()
-    assert body["preview"]["kind"] == "json"
-    assert body["preview"]["data"]["a"] == 1
+    assert body["preview"]["kind"] == "table"
+    assert body["preview"]["headers"] == ["a", "b"]
 
 
 def test_resource_preview_external_failure_returns_safe_error(monkeypatch):
@@ -723,3 +723,48 @@ def test_resource_visualize_temp_file_cleanup(monkeypatch):
     assert response.status_code == 200
     assert created_paths
     assert all(not Path(path).exists() for path in created_paths)
+
+
+def test_data_go_kr_search_filters_generic_and_scores_current_detail():
+    from backend.public_data_portal import parse_data_go_kr_search_html
+
+    html = """
+    <ul class="result-list">
+      <li class="result-item"><a href="/data/1/fileData.do">서울 부동산 가격 CSV</a><span>제공기관 서울시 분류체계 주택 확장자 CSV 서울 가격</span></li>
+      <li class="result-item"><a href="/tcs/dss/selectDataSetList.do">데이터찾기</a></li>
+      <li class="result-item"><a href="/data/2/apiData.do">교통 API</a><span>설명 서울 부동산 언급만 있음</span></li>
+    </ul>
+    """
+    result = parse_data_go_kr_search_html(html, "서울 부동산 가격")
+    titles = [item["title"] for item in result.items]
+    assert "데이터찾기" not in titles
+    assert result.items[0]["title"] == "서울 부동산 가격 CSV"
+    assert result.items[0]["score"] > result.items[-1]["score"]
+    assert result.items[0]["detail_url"].endswith("/data/1/fileData.do")
+
+
+def test_detail_html_extracts_href_onclick_data_and_declared_format():
+    from backend.public_data_portal import parse_data_go_kr_detail_html
+
+    html = """
+    <html><body><h1>서울 부동산</h1><p>제공기관 서울시 확장자 CSV</p>
+      <a href="/download/file?id=1">CSV 다운로드</a>
+      <button onclick="download('/download/file?id=2')">엑셀 다운로드 CSV</button>
+      <button data-url="/api/getData?serviceKey=abc">OpenAPI 미리보기</button>
+    </body></html>
+    """
+    result = parse_data_go_kr_detail_html(html, "https://www.data.go.kr/data/1/fileData.do")
+    assert len(result.resources) >= 3
+    assert any(r["format"] == "CSV" for r in result.resources)
+    assert any(r["source_hint"] in {"onclick", "data-url", "href"} for r in result.resources)
+    assert any(r.get("unsupported_reason") for r in result.resources if "serviceKey" in r["url"])
+
+
+def test_resource_preview_json_nested_and_cp949_csv():
+    from backend.public_data_portal import normalize_resource_preview
+
+    json_preview = normalize_resource_preview({}, b'{"response":{"body":{"items":[{"name":"a","value":1}]}}}', "JSON", 5, False)
+    assert json_preview["kind"] == "table"
+    assert json_preview["headers"] == ["name", "value"]
+    csv_preview = normalize_resource_preview({}, "이름,값\n서울,1\n".encode("cp949"), "CSV", 5, False)
+    assert csv_preview["rows"][0][0] == "서울"

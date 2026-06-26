@@ -659,3 +659,42 @@ curl "http://localhost:8000/api/diagnostics/data-portal?query=서울%20부동산
 6. 분석 목차와 데이터 코멘트에 “지역별 차이 비교” 관점이 반영되고, 추가 프롬프트 전송만으로 data.go.kr 검색이나 resource 다운로드가 자동 반복되지 않는지 확인합니다.
 7. 공공데이터 후보를 선택한 뒤 상세/resource 영역에서 `미리보기`와 `이 리소스로 시각화` 안내가 보이는지 확인합니다. URL이 없거나 CSV/TSV/JSON이 아닌 형식은 미지원 안내가 표시되어야 합니다.
 8. 로컬 파일 업로드는 “직접 파일 업로드 (대안 경로)”로 유지되며 기존 CSV/XLS/XLSX 시각화가 계속 동작하는지 확인합니다.
+
+## Resource-first public data runbook
+
+The dashboard is designed to keep 공공데이터포털 resources as the primary path and direct file upload as a fallback path:
+
+1. Enter a natural-language prompt.
+2. If `/api/keywords` cannot run because `GOOGLE_API_KEY` is not configured, the frontend uses a deterministic fallback keyword and continues to `/api/datasets/search`.
+3. Select a public-data candidate, then wait for `/api/datasets/detail` to show metadata and resource cards.
+4. Use `미리보기` first, then click `이 리소스로 시각화` only for the selected resource. Search/detail never auto-downloads resource URLs.
+5. Use `직접 파일 업로드` only as an alternative path for local CSV/XLS/XLSX files or remote Excel files that are not auto-analyzed.
+
+### Codespaces/API connection checks
+
+- Backend: run on port `8000` (for example `python -m uvicorn backend.app:app --host 127.0.0.1 --port 8000`).
+- Frontend: serve on port `5173`.
+- Set `ALLOWED_ORIGINS` to include the Codespaces frontend origin when testing across forwarded ports.
+- In the browser console, check `localStorage.getItem("PUBLIC_DATA_API_BASE_URL")`; set it to the forwarded backend URL only when the default API base URL is wrong, and remove it to return to auto-detection.
+
+### Manual resource-first verification checklist
+
+In the browser Network tab, verify these endpoints complete and do not remain pending:
+
+- `/api/keywords`
+- `/api/datasets/search`
+- `/api/datasets/detail`
+- `/api/datasets/resource/preview`
+- `/api/datasets/resource/visualize`
+- `/api/visualize`
+
+Also verify candidate cards avoid generic navigation titles such as `데이터찾기`, resource cards show preview/visualize support and unsupported reasons, preview shows table/JSON samples, and comments/outline change after additional prompts without automatically repeating search/detail/resource fetch.
+
+### Smoke tests
+
+Default smoke mode does not call `data.go.kr`; it checks local backend health, local visualization, and keyword fallback behavior. Live portal checks only run with the explicit opt-in flag:
+
+```bash
+python scripts/smoke_api_flow.py --base-url http://127.0.0.1:8000
+python scripts/smoke_api_flow.py --base-url http://127.0.0.1:8000 --live-data-go-kr --query "서울 부동산 가격"
+```
