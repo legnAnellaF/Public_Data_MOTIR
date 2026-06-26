@@ -21,6 +21,7 @@ from backend.keyword_extractor import analyze_project_idea
 from backend.public_data_portal import (
     RESOURCE_PREVIEW_TIMEOUT_SECONDS,
     fetch_dataset_detail,
+    check_data_go_kr_connectivity,
     fetch_dataset_search,
     fetch_resource_preview,
     infer_resource_format,
@@ -233,6 +234,12 @@ def extract_keywords(request: KeywordRequest) -> dict[str, str]:
         )
 
     return {"status": "success", "topic": str(topic)}
+
+
+@app.get("/api/diagnostics/data-portal")
+def diagnose_data_portal(query: str = "서울 부동산 가격") -> dict[str, Any]:
+    """Run an explicit, fixed-endpoint live data.go.kr connectivity diagnostic."""
+    return check_data_go_kr_connectivity(query).to_dict()
 
 
 @app.post("/api/datasets/search")

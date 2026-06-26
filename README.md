@@ -618,3 +618,31 @@ live data.go.kr 검색까지 확인할 때만 명시적으로 opt-in 합니다.
 ```bash
 python scripts/smoke_api_flow.py --base-url http://127.0.0.1:8000 --live-data-go-kr
 ```
+
+## data.go.kr 연결 진단
+
+`/api/health`는 backend 프로세스가 실행 중인지 확인하는 빠른 local-only health check입니다. 이 endpoint는 느려지지 않도록 data.go.kr 같은 외부 서비스를 live 호출하지 않습니다.
+
+배포 환경에서 backend가 실제로 data.go.kr까지 outbound 접근할 수 있는지 확인하려면 명시적으로 다음 endpoint를 호출합니다.
+
+```bash
+curl "http://localhost:8000/api/diagnostics/data-portal?query=서울%20부동산%20가격"
+```
+
+`GET /api/diagnostics/data-portal`은 고정된 `https://www.data.go.kr/tcs/dss/selectDataSetList.do` 검색 URL만 짧은 timeout으로 호출하고, HTML 원문 대신 `status`, sanitized `search_url`, `http_status`, `elapsed_ms`, `candidate_count`, 첫 후보의 안전한 metadata, `reason_code`만 반환합니다. 임의 URL을 받아 fetch하지 않으므로 SSRF 진단 endpoint로 사용하면 안 됩니다.
+
+대표 reason code는 다음과 같습니다.
+
+- `DATA_PORTAL_TIMEOUT`: data.go.kr 검색 페이지 호출 timeout
+- `DATA_PORTAL_HTTP_ERROR`: 403/5xx 등 HTTP 오류
+- `DATA_PORTAL_NETWORK_ERROR`: DNS, proxy, 연결 차단 등 네트워크 오류
+- `DATA_PORTAL_PARSE_EMPTY`: 응답은 받았지만 HTML 구조 변경 등으로 후보를 해석하지 못함
+
+배포 환경에서 data.go.kr 접근이 실패하면 backend 배포 provider의 outbound 정책, proxy 설정, 방화벽/WAF, data.go.kr 측 제한 또는 HTML 구조 변경 가능성을 함께 확인해야 합니다. live diagnostics는 사용자가 `/api/diagnostics/data-portal`을 직접 호출하거나 대시보드 버튼을 누를 때만 외부 요청을 보냅니다.
+
+실제 사이트 점검 순서:
+
+1. 대시보드 **API 연결 상태**가 success인지 확인합니다.
+2. 같은 패널의 **data.go.kr 연결 확인** 버튼을 클릭합니다.
+3. diagnostics 결과의 후보 count와 첫 후보 제목을 확인합니다.
+4. 공공데이터 검색, detail, resource preview, visualize 순서로 확인합니다.

@@ -32,6 +32,16 @@ def request_or_explain(method: str, url: str, **kwargs) -> requests.Response:
         ) from exc
 
 
+def get_json(base: str, path: str, timeout: int = 30) -> dict:
+    url = f"{base}{path}"
+    response = request_or_explain("GET", url, timeout=timeout)
+    print(f"{path} -> HTTP {response.status_code}")
+    if response.status_code >= 400:
+        print(response.text[:500])
+        response.raise_for_status()
+    return response.json()
+
+
 def post_json(base: str, path: str, payload: dict, timeout: int = 30) -> dict:
     url = f"{base}{path}"
     response = request_or_explain("POST", url, json=payload, timeout=timeout)
@@ -76,13 +86,25 @@ def main() -> int:
         raise RuntimeError("visualize returned no datasets")
 
     if args.live_data_go_kr:
+        diagnostics = get_json(base, f"/api/diagnostics/data-portal?query={requests.utils.quote(args.query)}", timeout=15)
+        print(
+            "diagnostics:",
+            diagnostics.get("status"),
+            "http_status=", diagnostics.get("http_status"),
+            "reason_code=", diagnostics.get("reason_code"),
+            "candidate_count=", diagnostics.get("candidate_count"),
+        )
+        first_diag = diagnostics.get("first_candidate") or {}
+        if first_diag.get("title") or first_diag.get("url"):
+            print("diagnostics first candidate:", first_diag.get("title"), first_diag.get("url"))
+
         search = post_json(base, "/api/datasets/search", {"keyword": args.query, "page": 1, "per_page": 10}, timeout=30)
         if not search.get("items"):
-            raise RuntimeError("live data.go.kr search returned no candidates")
+            raise RuntimeError(f"live data.go.kr search returned no candidates (reason_code={search.get('reason_code')})")
         first = search["items"][0]
         if not (first.get("url") or first.get("detail_url")):
             raise RuntimeError("first candidate has no detail URL")
-        print("live candidate:", first.get("title"), first.get("url") or first.get("detail_url"))
+        print("live candidate:", first.get("title"), first.get("url") or first.get("detail_url"), "reason_code=", search.get("reason_code"))
     else:
         print("skip live data.go.kr smoke (pass --live-data-go-kr to enable)")
     return 0

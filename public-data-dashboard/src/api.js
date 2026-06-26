@@ -146,6 +146,18 @@
     });
   }
 
+  function checkDataPortalDiagnostics(query) {
+    const params = new URLSearchParams();
+    if (query) {
+      params.set("query", query);
+    }
+    const suffix = params.toString() ? `?${params.toString()}` : "";
+    return requestJson(`/api/diagnostics/data-portal${suffix}`, {
+      method: "GET",
+      fallbackMessage: "data.go.kr 연결 진단에 실패했습니다.",
+    });
+  }
+
   function extractKeywords(prompt) {
     return requestJson("/api/keywords", {
       method: "POST",
@@ -247,6 +259,7 @@
     getApiBaseUrlSource,
     setStoredApiBaseUrl,
     checkApiHealth,
+    checkDataPortalDiagnostics,
     extractKeywords,
     searchDatasets,
     fetchDatasetDetail,

@@ -12,9 +12,11 @@ from __future__ import annotations
 import csv
 import ipaddress
 import json
+import logging
 import os
 import re
 import socket
+import time
 from dataclasses import dataclass
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -27,6 +29,9 @@ DATA_GO_KR_ORIGIN = "https://www.data.go.kr"
 DATA_GO_KR_SEARCH_URL = f"{DATA_GO_KR_ORIGIN}/tcs/dss/selectDataSetList.do"
 DEFAULT_PUBLIC_DATA_PORTAL_BASE_URL = DATA_GO_KR_SEARCH_URL
 DATA_GO_KR_TIMEOUT_SECONDS = 10
+DATA_GO_KR_DIAGNOSTIC_TIMEOUT_SECONDS = 5
+
+logger = logging.getLogger(__name__)
 
 
 RESOURCE_PREVIEW_MAX_BYTES = 256 * 1024
@@ -83,14 +88,48 @@ class DatasetSearchResult:
     query: str
     items: list[dict[str, Any]]
     message: str = ""
+    reason_code: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "status": self.status,
             "query": self.query,
             "items": self.items,
             "message": self.message,
         }
+        if self.reason_code:
+            payload["reason_code"] = self.reason_code
+        return payload
+
+
+@dataclass(frozen=True)
+class DataPortalDiagnosticResult:
+    """Safe data.go.kr outbound connectivity diagnostic response."""
+
+    status: str
+    portal: str
+    search_url: str
+    http_status: int | None
+    elapsed_ms: int
+    candidate_count: int
+    first_candidate: dict[str, Any] | None = None
+    message: str = ""
+    reason_code: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = {
+            "status": self.status,
+            "portal": self.portal,
+            "search_url": self.search_url,
+            "http_status": self.http_status,
+            "elapsed_ms": self.elapsed_ms,
+            "candidate_count": self.candidate_count,
+            "first_candidate": self.first_candidate,
+            "message": self.message,
+        }
+        if self.reason_code:
+            payload["reason_code"] = self.reason_code
+        return payload
 
 
 def _clean_string(value: Any) -> str:
@@ -339,12 +378,68 @@ def parse_data_go_kr_detail_html(html: str, detail_url: str = "") -> DatasetDeta
     return DatasetDetailResult(status="success", dataset=dataset, resources=resources, message=msg)
 
 
-def _read_text_url(url: str) -> str:
+
+def _build_data_go_kr_search_url(keyword: str, page: int = 1, per_page: int = 10) -> str:
+    params = {
+        "dType": "TOTAL",
+        "keyword": _clean_string(keyword),
+        "detailKeyword": "",
+        "publicDataPk": "",
+        "recmSe": "",
+        "detailText": "",
+        "relatedKeyword": "",
+        "commaNotInData": "",
+        "commaAndData": "",
+        "commaOrData": "",
+        "must_not": "",
+        "tabId": "",
+        "dataSetCoreTf": "",
+        "coreDataNm": "",
+        "sort": "",
+        "relRadio": "",
+        "orgFullName": "",
+        "orgFilter": "",
+        "org": "",
+        "orgSearch": "",
+        "currentPage": page,
+        "perPage": per_page,
+        "brm": "",
+        "instt": "",
+        "svcType": "",
+        "kwrdArray": "",
+        "extsn": "",
+        "coreDataNmArray": "",
+        "operator": "OR",
+        "pblonsipScopeCode": "",
+    }
+    return f"{DATA_GO_KR_SEARCH_URL}?{urlencode(params)}"
+
+
+def _classify_portal_exception(exc: BaseException) -> tuple[str, int | None]:
+    if isinstance(exc, HTTPError):
+        return "DATA_PORTAL_HTTP_ERROR", exc.code
+    if isinstance(exc, TimeoutError):
+        return "DATA_PORTAL_TIMEOUT", None
+    if isinstance(exc, URLError):
+        reason = getattr(exc, "reason", None)
+        if isinstance(reason, TimeoutError) or "timed out" in str(reason).lower():
+            return "DATA_PORTAL_TIMEOUT", None
+        return "DATA_PORTAL_NETWORK_ERROR", None
+    return "DATA_PORTAL_NETWORK_ERROR", None
+
+
+def _read_text_url_with_status(url: str, timeout: int = DATA_GO_KR_TIMEOUT_SECONDS) -> tuple[str, int, str]:
     req = Request(url, headers={"Accept": "text/html,application/xhtml+xml", "User-Agent": "Mozilla/5.0 Public-Data-MOTIR/1.0"})
-    with urlopen(req, timeout=DATA_GO_KR_TIMEOUT_SECONDS) as response:  # noqa: S310 - fixed public portal search URL or pre-validated detail URL.
+    with urlopen(req, timeout=timeout) as response:  # noqa: S310 - fixed public portal search URL or pre-validated detail URL.
+        final_url = response.geturl() if hasattr(response, "geturl") else url
         raw = response.read()
         charset = response.headers.get_content_charset() or "utf-8"
-        return raw.decode(charset, errors="replace")
+        status_code = getattr(response, "status", None) or getattr(response, "code", 200)
+        return raw.decode(charset, errors="replace"), int(status_code), final_url
+
+def _read_text_url(url: str) -> str:
+    html, _status_code, _final_url = _read_text_url_with_status(url, DATA_GO_KR_TIMEOUT_SECONDS)
+    return html
 
 
 def validate_data_go_kr_detail_url(url: str) -> str:
@@ -503,7 +598,9 @@ def fetch_dataset_detail(dataset_id_or_url: str) -> DatasetDetailResult:
         html, final_url = _read_data_go_kr_detail_url(identifier)
     except ValueError as exc:
         return DatasetDetailResult(status="error", dataset={"title": "공공데이터 상세", "url": sanitize_url_for_response(identifier)}, resources=[], message=str(exc))
-    except (HTTPError, URLError, TimeoutError, OSError):
+    except (HTTPError, URLError, TimeoutError, OSError) as exc:
+        reason_code, http_status = _classify_portal_exception(exc)
+        logger.warning("data.go.kr detail failed url=%s reason=%s http_status=%s", sanitize_url_for_response(identifier), reason_code, http_status)
         return DatasetDetailResult(status="error", dataset={"title": "공공데이터 상세", "url": sanitize_url_for_response(identifier)}, resources=[], message="공공데이터포털 상세 페이지 호출에 실패했습니다.")
     return parse_data_go_kr_detail_html(html, sanitize_url_for_response(final_url))
 
@@ -522,48 +619,90 @@ def _build_search_url(base_url: str, keyword: str, page: int, per_page: int, api
     return f"{base}{separator}{params}"
 
 
+def check_data_go_kr_connectivity(query: str = "서울 부동산 가격") -> DataPortalDiagnosticResult:
+    """Run a bounded, fixed-endpoint data.go.kr search diagnostic without returning raw HTML."""
+    keyword = _clean_string(query) or "서울 부동산 가격"
+    url = _build_data_go_kr_search_url(keyword, page=1, per_page=5)
+    safe_url = sanitize_url_for_response(url)
+    started = time.perf_counter()
+    try:
+        html, http_status, final_url = _read_text_url_with_status(url, DATA_GO_KR_DIAGNOSTIC_TIMEOUT_SECONDS)
+        safe_url = sanitize_url_for_response(final_url)
+        parsed = parse_data_go_kr_search_html(html, keyword)
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        if not parsed.items:
+            logger.warning("data.go.kr diagnostic parse empty url=%s reason=%s elapsed_ms=%s", safe_url, "DATA_PORTAL_PARSE_EMPTY", elapsed_ms)
+            return DataPortalDiagnosticResult(
+                status="error",
+                portal="data.go.kr",
+                search_url=safe_url,
+                http_status=http_status,
+                elapsed_ms=elapsed_ms,
+                candidate_count=0,
+                message="data.go.kr 검색 페이지는 응답했지만 후보를 해석하지 못했습니다.",
+                reason_code="DATA_PORTAL_PARSE_EMPTY",
+            )
+        first = parsed.items[0]
+        first_candidate = {key: first.get(key) for key in ("title", "provider", "format", "url")}
+        logger.info("data.go.kr diagnostic success url=%s http_status=%s candidate_count=%s elapsed_ms=%s", safe_url, http_status, len(parsed.items), elapsed_ms)
+        return DataPortalDiagnosticResult(
+            status="success",
+            portal="data.go.kr",
+            search_url=safe_url,
+            http_status=http_status,
+            elapsed_ms=elapsed_ms,
+            candidate_count=len(parsed.items),
+            first_candidate=first_candidate,
+            message="",
+        )
+    except (HTTPError, URLError, TimeoutError, OSError) as exc:
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        reason_code, http_status = _classify_portal_exception(exc)
+        logger.warning("data.go.kr diagnostic failed url=%s reason=%s http_status=%s elapsed_ms=%s", safe_url, reason_code, http_status, elapsed_ms)
+        return DataPortalDiagnosticResult(
+            status="error",
+            portal="data.go.kr",
+            search_url=safe_url,
+            http_status=http_status,
+            elapsed_ms=elapsed_ms,
+            candidate_count=0,
+            message="data.go.kr 검색 페이지 호출에 실패했습니다. 네트워크, 프록시, WAF 또는 포털 접근 상태를 확인해 주세요.",
+            reason_code=reason_code,
+        )
+    except Exception:
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        logger.exception("data.go.kr diagnostic internal error url=%s elapsed_ms=%s", safe_url, elapsed_ms)
+        return DataPortalDiagnosticResult(
+            status="error",
+            portal="data.go.kr",
+            search_url=safe_url,
+            http_status=None,
+            elapsed_ms=elapsed_ms,
+            candidate_count=0,
+            message="data.go.kr 진단 처리 중 내부 오류가 발생했습니다.",
+            reason_code="DATA_PORTAL_INTERNAL_ERROR",
+        )
+
+
 def fetch_dataset_search(keyword: str, page: int = 1, per_page: int = 10) -> DatasetSearchResult:
     """Fetch data.go.kr public HTML search results and normalize candidate cards."""
     keyword = _clean_string(keyword)
-    params = {
-        "dType": "TOTAL",
-        "keyword": keyword,
-        "detailKeyword": "",
-        "publicDataPk": "",
-        "recmSe": "",
-        "detailText": "",
-        "relatedKeyword": "",
-        "commaNotInData": "",
-        "commaAndData": "",
-        "commaOrData": "",
-        "must_not": "",
-        "tabId": "",
-        "dataSetCoreTf": "",
-        "coreDataNm": "",
-        "sort": "",
-        "relRadio": "",
-        "orgFullName": "",
-        "orgFilter": "",
-        "org": "",
-        "orgSearch": "",
-        "currentPage": page,
-        "perPage": per_page,
-        "brm": "",
-        "instt": "",
-        "svcType": "",
-        "kwrdArray": "",
-        "extsn": "",
-        "coreDataNmArray": "",
-        "operator": "OR",
-        "pblonsipScopeCode": "",
-    }
-    url = f"{DATA_GO_KR_SEARCH_URL}?{urlencode(params)}"
+    url = _build_data_go_kr_search_url(keyword, page=page, per_page=per_page)
+    safe_url = sanitize_url_for_response(url)
+    started = time.perf_counter()
     try:
         html = _read_text_url(url)
-    except (HTTPError, URLError, TimeoutError, OSError):
-        return DatasetSearchResult(status="error", query=keyword, items=[], message="data.go.kr 검색 페이지 호출에 실패했습니다. 네트워크, 프록시 또는 포털 접근 상태를 확인해 주세요.")
-    return parse_data_go_kr_search_html(html, keyword)
-
+    except (HTTPError, URLError, TimeoutError, OSError) as exc:
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        reason_code, http_status = _classify_portal_exception(exc)
+        logger.warning("data.go.kr search failed url=%s reason=%s http_status=%s elapsed_ms=%s", safe_url, reason_code, http_status, elapsed_ms)
+        return DatasetSearchResult(status="error", query=keyword, items=[], message="data.go.kr 검색 페이지 호출에 실패했습니다. 네트워크, 프록시 또는 포털 접근 상태를 확인해 주세요.", reason_code=reason_code)
+    result = parse_data_go_kr_search_html(html, keyword)
+    elapsed_ms = int((time.perf_counter() - started) * 1000)
+    if not result.items:
+        logger.warning("data.go.kr search returned no parseable candidates url=%s reason=%s elapsed_ms=%s", safe_url, "DATA_PORTAL_PARSE_EMPTY", elapsed_ms)
+        return DatasetSearchResult(status=result.status, query=result.query, items=result.items, message=result.message, reason_code="DATA_PORTAL_PARSE_EMPTY")
+    return result
 
 def sanitize_url_for_response(url: str) -> str:
     """Return URL safe for metadata/log-style responses by redacting sensitive query values."""

@@ -12,6 +12,17 @@ FIXTURES_DIR = Path(__file__).parent / "fixtures"
 client = TestClient(app)
 
 
+def test_health_does_not_call_data_portal(monkeypatch):
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("health must not call data.go.kr")
+
+    monkeypatch.setattr("backend.app.check_data_go_kr_connectivity", fail_if_called)
+
+    response = client.get("/api/health")
+
+    assert response.status_code == 200
+
+
 def test_health():
     response = client.get("/api/health")
 
@@ -125,6 +136,51 @@ def test_dataset_search_empty_keyword_returns_400():
     assert "keyword" in body["message"]
 
 
+def test_data_portal_diagnostics_success_with_mock(monkeypatch):
+    from backend.public_data_portal import DataPortalDiagnosticResult
+
+    def fake_check(query="서울 부동산 가격"):
+        assert query == "서울 부동산 가격"
+        return DataPortalDiagnosticResult(
+            status="success",
+            portal="data.go.kr",
+            search_url="https://www.data.go.kr/tcs/dss/selectDataSetList.do?keyword=서울+부동산+가격",
+            http_status=200,
+            elapsed_ms=12,
+            candidate_count=1,
+            first_candidate={"title": "서울 부동산", "provider": "서울시", "format": "CSV", "url": "https://www.data.go.kr/tcs/dss/selectFileDataDetailView.do?publicDataPk=1"},
+            message="",
+        )
+
+    monkeypatch.setattr("backend.app.check_data_go_kr_connectivity", fake_check)
+
+    response = client.get("/api/diagnostics/data-portal")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "success"
+    assert body["portal"] == "data.go.kr"
+    assert body["candidate_count"] == 1
+    assert body["first_candidate"]["title"] == "서울 부동산"
+
+
+def test_data_portal_diagnostics_network_failure_returns_safe_json(monkeypatch):
+    def fail_urlopen(*args, **kwargs):
+        raise OSError("network secret stack trace")
+
+    monkeypatch.setattr("backend.public_data_portal.urlopen", fail_urlopen)
+
+    response = client.get("/api/diagnostics/data-portal?query=서울+빈집")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "error"
+    assert body["portal"] == "data.go.kr"
+    assert body["candidate_count"] == 0
+    assert body["reason_code"] == "DATA_PORTAL_NETWORK_ERROR"
+    assert "network secret stack trace" not in str(body)
+
+
 def test_dataset_search_network_failure_returns_safe_error(monkeypatch):
     def fail_urlopen(*args, **kwargs):
         raise OSError("network blocked")
@@ -138,6 +194,8 @@ def test_dataset_search_network_failure_returns_safe_error(monkeypatch):
     assert body["status"] == "error"
     assert body["items"] == []
     assert "data.go.kr" in body["message"]
+    assert body["reason_code"] == "DATA_PORTAL_NETWORK_ERROR"
+    assert "network blocked" not in str(body)
     assert "secret" not in str(body).lower()
 
 
