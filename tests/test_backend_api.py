@@ -99,8 +99,11 @@ def test_dataset_search_empty_keyword_returns_400():
     assert "keyword" in body["message"]
 
 
-def test_dataset_search_without_api_key_returns_safe_error(monkeypatch):
-    monkeypatch.delenv("PUBLIC_DATA_API_KEY", raising=False)
+def test_dataset_search_network_failure_returns_safe_error(monkeypatch):
+    def fail_urlopen(*args, **kwargs):
+        raise OSError("network blocked")
+
+    monkeypatch.setattr("backend.public_data_portal.urlopen", fail_urlopen)
 
     response = client.post("/api/datasets/search", json={"keyword": "서울 빈집"})
 
@@ -108,7 +111,7 @@ def test_dataset_search_without_api_key_returns_safe_error(monkeypatch):
     body = response.json()["detail"]
     assert body["status"] == "error"
     assert body["items"] == []
-    assert "PUBLIC_DATA_API_KEY" in body["message"]
+    assert "data.go.kr" in body["message"]
     assert "secret" not in str(body).lower()
 
 
@@ -166,6 +169,59 @@ def test_dataset_search_success_with_mocked_client(monkeypatch):
 
 
 
+def test_parse_data_go_kr_search_html_fixture_success():
+    from backend.public_data_portal import parse_data_go_kr_search_html
+
+    html = """
+    <ul class="result-list">
+      <li>
+        <a href="/tcs/dss/selectFileDataDetailView.do?publicDataPk=15000001">서울특별시 부동산 실거래가 정보</a>
+        <span>제공기관 서울특별시</span><span>분류체계 지역개발</span>
+        <span>확장자 CSV</span><span>수정일 2026-01-02</span>
+        <p>서울 부동산 가격 파일데이터입니다.</p>
+      </li>
+    </ul>
+    """
+
+    result = parse_data_go_kr_search_html(html, "서울 부동산 가격")
+
+    assert result.status == "success"
+    assert result.items
+    assert result.items[0]["title"] == "서울특별시 부동산 실거래가 정보"
+    assert result.items[0]["provider"] == "서울특별시"
+    assert result.items[0]["format"] == "CSV"
+    assert result.items[0]["url"].startswith("https://www.data.go.kr/")
+
+
+def test_parse_data_go_kr_detail_html_fixture_success():
+    from backend.public_data_portal import parse_data_go_kr_detail_html
+
+    html = """
+    <main>
+      <h2>서울특별시 부동산 실거래가 정보</h2>
+      <div>제공기관 서울특별시 분류체계 지역개발 확장자 CSV 수정일 2026-01-02</div>
+      <a href="https://example.com/estate.csv">CSV 다운로드</a>
+    </main>
+    """
+
+    result = parse_data_go_kr_detail_html(html, "https://www.data.go.kr/detail")
+
+    assert result.status == "success"
+    assert result.dataset["title"] == "서울특별시 부동산 실거래가 정보"
+    assert result.resources[0]["url"] == "https://example.com/estate.csv"
+    assert result.resources[0]["format"] == "CSV"
+
+
+def test_parse_data_go_kr_detail_html_no_resource_fallback():
+    from backend.public_data_portal import parse_data_go_kr_detail_html
+
+    result = parse_data_go_kr_detail_html("<h2>광주 맛집 정보</h2><p>제공기관 광주광역시</p>", "https://www.data.go.kr/detail")
+
+    assert result.status == "success"
+    assert result.resources == []
+    assert "직접 다운로드" in result.message
+
+
 def test_dataset_detail_missing_identifier_returns_400():
     response = client.post("/api/datasets/detail", json={"raw": {}})
 
@@ -175,31 +231,15 @@ def test_dataset_detail_missing_identifier_returns_400():
     assert "dataset_id" in body["message"]
 
 
-def test_dataset_detail_without_api_key_returns_safe_error(monkeypatch):
-    monkeypatch.delenv("PUBLIC_DATA_API_KEY", raising=False)
-    monkeypatch.setenv("PUBLIC_DATA_PORTAL_BASE_URL", "https://example.test/detail")
-
+def test_dataset_detail_requires_detail_url_for_live_lookup():
     response = client.post("/api/datasets/detail", json={"dataset_id": "ds-1"})
 
     assert response.status_code == 503
     body = response.json()["detail"]
     assert body["status"] == "error"
     assert body["resources"] == []
-    assert "PUBLIC_DATA_API_KEY" in body["message"]
-    assert "secret" not in str(body).lower()
+    assert "상세 URL" in body["message"]
 
-
-def test_dataset_detail_without_base_url_returns_safe_error(monkeypatch):
-    monkeypatch.setenv("PUBLIC_DATA_API_KEY", "test-key")
-    monkeypatch.delenv("PUBLIC_DATA_PORTAL_BASE_URL", raising=False)
-
-    response = client.post("/api/datasets/detail", json={"dataset_id": "ds-1"})
-
-    assert response.status_code == 503
-    body = response.json()["detail"]
-    assert body["status"] == "error"
-    assert "PUBLIC_DATA_PORTAL_BASE_URL" in body["message"]
-    assert "test-key" not in str(body)
 
 
 def test_normalize_dataset_detail_fixture_extracts_resources():

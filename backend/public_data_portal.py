@@ -1,8 +1,10 @@
-"""Configurable Public Data Portal dataset search client.
+"""Public Data Portal dataset search/detail/resource helpers.
 
-The first integration step intentionally keeps the real portal endpoint configurable.
-TODO: Confirm the production 공공데이터포털 dataset-search endpoint and response contract,
-then set PUBLIC_DATA_PORTAL_BASE_URL in deployment without hard-coding secrets here.
+This module talks to the public data.go.kr HTML pages for dataset search and
+detail lookup, then normalizes the scraped metadata into frontend-friendly JSON.
+It intentionally avoids requiring API keys for search/detail because the public
+portal list/detail pages are browseable, while resource preview/visualization
+still fetch only user-selected URLs with SSRF and size protections.
 """
 
 from __future__ import annotations
@@ -11,14 +13,20 @@ import csv
 import ipaddress
 import json
 import os
+import re
 import socket
 from dataclasses import dataclass
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from html import unescape
+from html.parser import HTMLParser
+from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
-DEFAULT_PUBLIC_DATA_PORTAL_BASE_URL = "https://api.odcloud.kr/api"
+DATA_GO_KR_ORIGIN = "https://www.data.go.kr"
+DATA_GO_KR_SEARCH_URL = f"{DATA_GO_KR_ORIGIN}/tcs/dss/selectDataSetList.do"
+DEFAULT_PUBLIC_DATA_PORTAL_BASE_URL = DATA_GO_KR_SEARCH_URL
+DATA_GO_KR_TIMEOUT_SECONDS = 10
 
 
 RESOURCE_PREVIEW_MAX_BYTES = 256 * 1024
@@ -172,6 +180,155 @@ def normalize_dataset_search_response(payload: Any, query: str) -> DatasetSearch
 
 
 
+class _DataGoKrHTMLParser(HTMLParser):
+    """Small dependency-free HTML parser that keeps enough structure for scraping."""
+
+    VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.root: dict[str, Any] = {"tag": "document", "attrs": {}, "children": [], "text": "", "parent": None}
+        self.stack: list[dict[str, Any]] = [self.root]
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        node = {"tag": tag.lower(), "attrs": {k.lower(): v or "" for k, v in attrs}, "children": [], "text": "", "parent": self.stack[-1]}
+        self.stack[-1]["children"].append(node)
+        if tag.lower() not in self.VOID_TAGS:
+            self.stack.append(node)
+
+    def handle_endtag(self, tag: str) -> None:
+        tag = tag.lower()
+        for index in range(len(self.stack) - 1, 0, -1):
+            if self.stack[index]["tag"] == tag:
+                del self.stack[index:]
+                return
+
+    def handle_data(self, data: str) -> None:
+        if data.strip():
+            self.stack[-1]["text"] += data
+
+
+def _parse_html(html: str) -> dict[str, Any]:
+    parser = _DataGoKrHTMLParser()
+    parser.feed(html)
+    return parser.root
+
+
+def _iter_nodes(node: dict[str, Any]) -> list[dict[str, Any]]:
+    nodes = [node]
+    for child in node.get("children", []):
+        nodes.extend(_iter_nodes(child))
+    return nodes
+
+
+def _node_text(node: dict[str, Any]) -> str:
+    parts = [node.get("text", "")]
+    for child in node.get("children", []):
+        parts.append(_node_text(child))
+    return re.sub(r"\s+", " ", unescape(" ".join(parts))).strip()
+
+
+def _node_links(node: dict[str, Any]) -> list[dict[str, str]]:
+    links = []
+    for child in _iter_nodes(node):
+        if child.get("tag") == "a" and child.get("attrs", {}).get("href"):
+            href = child["attrs"]["href"].strip()
+            links.append({"href": urljoin(DATA_GO_KR_ORIGIN, href), "text": _node_text(child), "title": child.get("attrs", {}).get("title", "")})
+    return links
+
+
+def _pick_detail_link(node: dict[str, Any]) -> str:
+    for link in _node_links(node):
+        href = link["href"]
+        blob = f"{href} {link.get('text','')} {link.get('title','')}"
+        if any(token in blob for token in ("selectDataSet", "selectFileData", "selectApiData", "dtst", "publicDataPk", "dataSetSn")):
+            return href
+    links = _node_links(node)
+    return links[0]["href"] if links else ""
+
+
+def _extract_labeled_value(text: str, labels: tuple[str, ...]) -> str:
+    for label in labels:
+        m = re.search(rf"{re.escape(label)}\s*[:：]?\s*([^|·•\n]+?)(?=\s+(?:제공기관|분류체계|수정일|갱신일|파일데이터명|오픈API명|공공데이터명|확장자|키워드|다운로드)|$)", text)
+        if m:
+            return m.group(1).strip(" -_/|·•")
+    return ""
+
+
+def parse_data_go_kr_search_html(html: str, query: str) -> DatasetSearchResult:
+    root = _parse_html(html)
+    candidates: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for node in _iter_nodes(root):
+        cls = node.get("attrs", {}).get("class", "")
+        if not ("result-list" in cls or "data-list" in cls or "dataset" in cls or "result" in cls or node.get("tag") in {"li", "tr"}):
+            continue
+        detail_url = _pick_detail_link(node)
+        text = _node_text(node)
+        if not detail_url or len(text) < 8:
+            continue
+        if "selectDataSetList" in detail_url:
+            continue
+        title = ""
+        for link in _node_links(node):
+            if link["href"] == detail_url and link.get("text"):
+                title = link["text"]
+                break
+        title = title or _extract_labeled_value(text, ("파일데이터명", "오픈API명", "공공데이터명", "서비스명")) or text[:80]
+        data_type = "FILE" if "파일데이터" in text or "FILE" in detail_url.upper() else ("API" if "오픈API" in text or "API" in detail_url.upper() else "UNKNOWN")
+        key = detail_url or title
+        if key in seen:
+            continue
+        seen.add(key)
+        candidates.append({
+            "id": _extract_labeled_value(detail_url, ("publicDataPk", "dataSetSn")) or None,
+            "title": title.strip(),
+            "description": text[:500],
+            "provider": _extract_labeled_value(text, ("제공기관", "기관명")),
+            "category": _extract_labeled_value(text, ("분류체계", "분류")),
+            "format": _extract_labeled_value(text, ("확장자", "파일형식", "포맷")) or data_type,
+            "updated_at": _extract_labeled_value(text, ("수정일", "갱신일", "등록일")) or None,
+            "url": detail_url,
+            "detail_url": detail_url,
+            "data_type": data_type,
+            "keywords": [kw for kw in re.split(r"\s+", query) if kw],
+            "raw": {"url": detail_url, "detailUrl": detail_url, "title": title, "description": text, "provider": _extract_labeled_value(text, ("제공기관", "기관명")), "format": _extract_labeled_value(text, ("확장자", "파일형식", "포맷")) or data_type, "data_type": data_type},
+        })
+        if len(candidates) >= 20:
+            break
+    return DatasetSearchResult(status="success", query=query, items=candidates, message="" if candidates else "검색 결과가 없거나 data.go.kr HTML 구조를 해석하지 못했습니다.")
+
+
+def parse_data_go_kr_detail_html(html: str, detail_url: str = "") -> DatasetDetailResult:
+    root = _parse_html(html)
+    page_text = _node_text(root)
+    h_texts = [_node_text(n) for n in _iter_nodes(root) if n.get("tag") in {"h1", "h2", "h3"} and _node_text(n)]
+    title = h_texts[0] if h_texts else _extract_labeled_value(page_text, ("파일데이터명", "오픈API명", "공공데이터명")) or "공공데이터 상세"
+    resources: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for link in _node_links(root):
+        href = link["href"]
+        blob = f"{href} {link.get('text','')} {link.get('title','')}".lower()
+        if not any(token in blob for token in ("download", "file", ".csv", ".json", ".xls", "api", "get", "excel")):
+            continue
+        if href in seen or "javascript:" in href.lower():
+            continue
+        seen.add(href)
+        fmt = _infer_resource_format({"url": href, "name": link.get("text", "")})
+        resources.append({"name": link.get("text") or link.get("title") or "리소스 후보", "format": fmt, "url": href, "description": "data.go.kr 상세 페이지에서 추출한 링크입니다.", "is_downloadable": fmt != "API", "is_api": fmt == "API"})
+    dataset = {"id": None, "title": title, "description": page_text[:1000], "provider": _extract_labeled_value(page_text, ("제공기관", "기관명")), "category": _extract_labeled_value(page_text, ("분류체계", "분류")), "format": _extract_labeled_value(page_text, ("확장자", "파일형식", "포맷")), "updated_at": _extract_labeled_value(page_text, ("수정일", "갱신일", "등록일")) or None, "url": detail_url}
+    msg = "" if resources else "상세 페이지는 찾았지만 다운로드 URL을 자동 추출하지 못했습니다. 상세 페이지에서 직접 다운로드가 필요합니다."
+    return DatasetDetailResult(status="success", dataset=dataset, resources=resources, message=msg)
+
+
+def _read_text_url(url: str) -> str:
+    req = Request(url, headers={"Accept": "text/html,application/xhtml+xml", "User-Agent": "Mozilla/5.0 Public-Data-MOTIR/1.0"})
+    with urlopen(req, timeout=DATA_GO_KR_TIMEOUT_SECONDS) as response:  # noqa: S310 - fixed public portal URL/detail URL.
+        raw = response.read()
+        charset = response.headers.get_content_charset() or "utf-8"
+        return raw.decode(charset, errors="replace")
+
+
 def _first_value(source: dict[str, Any], keys: tuple[str, ...]) -> Any:
     for key in keys:
         value = source.get(key)
@@ -290,39 +447,17 @@ def _build_detail_url(base_url: str, dataset_id_or_url: str, api_key: str) -> st
 
 
 def fetch_dataset_detail(dataset_id_or_url: str) -> DatasetDetailResult:
-    """Fetch and normalize dataset detail from configured portal endpoint.
-
-    The official detail endpoint is intentionally not hard-coded. Until deployment
-    config points PUBLIC_DATA_PORTAL_BASE_URL at a confirmed detail-capable endpoint,
-    routes may pass the selected raw search item to normalize_dataset_detail instead.
-    """
-    api_key = _clean_string(os.getenv("PUBLIC_DATA_API_KEY"))
-    if not api_key:
-        return DatasetDetailResult(
-            status="error",
-            dataset=None,
-            resources=[],
-            message="PUBLIC_DATA_API_KEY 설정이 필요합니다. 실제 키 값은 서버 환경 변수에만 저장해 주세요.",
-        )
-    base_url = _clean_string(os.getenv("PUBLIC_DATA_PORTAL_BASE_URL"))
-    if not base_url:
-        return DatasetDetailResult(
-            status="error",
-            dataset=None,
-            resources=[],
-            message="PUBLIC_DATA_PORTAL_BASE_URL 설정이 필요합니다. 상세 endpoint가 확정되면 서버 환경 변수로 지정해 주세요.",
-        )
-
-    request = Request(_build_detail_url(base_url, dataset_id_or_url, api_key), headers={"Accept": "application/json", "User-Agent": "Public-Data-MOTIR/1.0"})
+    """Fetch and parse a data.go.kr detail page by absolute detail URL."""
+    identifier = _clean_string(dataset_id_or_url)
+    if not identifier:
+        return DatasetDetailResult(status="error", dataset=None, resources=[], message="상세 URL이 필요합니다.")
+    if not _looks_like_url(identifier):
+        return DatasetDetailResult(status="error", dataset=None, resources=[], message="검색 결과의 data.go.kr 상세 URL이 필요합니다.")
     try:
-        with urlopen(request, timeout=10) as response:  # noqa: S310 - URL is operator-configured.
-            payload = json.loads(response.read().decode("utf-8"))
-    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError, OSError):
-        return DatasetDetailResult(status="error", dataset=None, resources=[], message="공공데이터포털 상세 API 호출 또는 응답 해석에 실패했습니다. endpoint/key 설정을 확인해 주세요.")
-
-    items = _extract_items(payload)
-    detail_raw = items[0] if items and isinstance(items[0], dict) else payload
-    return normalize_dataset_detail(detail_raw if isinstance(detail_raw, dict) else {})
+        html = _read_text_url(identifier)
+    except (HTTPError, URLError, TimeoutError, OSError):
+        return DatasetDetailResult(status="error", dataset={"title": "공공데이터 상세", "url": sanitize_url_for_response(identifier)}, resources=[], message="공공데이터포털 상세 페이지 호출에 실패했습니다.")
+    return parse_data_go_kr_detail_html(html, sanitize_url_for_response(identifier))
 
 
 def _build_search_url(base_url: str, keyword: str, page: int, per_page: int, api_key: str) -> str:
@@ -340,37 +475,46 @@ def _build_search_url(base_url: str, keyword: str, page: int, per_page: int, api
 
 
 def fetch_dataset_search(keyword: str, page: int = 1, per_page: int = 10) -> DatasetSearchResult:
-    """Call the configured public-data search endpoint and return normalized results.
-
-    Returns an error-shaped DatasetSearchResult instead of raising for missing config or
-    provider/network failures so the route can send safe JSON without exposing keys.
-    """
-    api_key = _clean_string(os.getenv("PUBLIC_DATA_API_KEY"))
-    if not api_key:
-        return DatasetSearchResult(
-            status="error",
-            query=keyword,
-            items=[],
-            message="PUBLIC_DATA_API_KEY 설정이 필요합니다. 실제 키 값은 서버 환경 변수에만 저장해 주세요.",
-        )
-
-    base_url = _clean_string(os.getenv("PUBLIC_DATA_PORTAL_BASE_URL")) or DEFAULT_PUBLIC_DATA_PORTAL_BASE_URL
-    url = _build_search_url(base_url, keyword, page, per_page, api_key)
-    request = Request(url, headers={"Accept": "application/json", "User-Agent": "Public-Data-MOTIR/1.0"})
-
+    """Fetch data.go.kr public HTML search results and normalize candidate cards."""
+    keyword = _clean_string(keyword)
+    params = {
+        "dType": "TOTAL",
+        "keyword": keyword,
+        "detailKeyword": "",
+        "publicDataPk": "",
+        "recmSe": "",
+        "detailText": "",
+        "relatedKeyword": "",
+        "commaNotInData": "",
+        "commaAndData": "",
+        "commaOrData": "",
+        "must_not": "",
+        "tabId": "",
+        "dataSetCoreTf": "",
+        "coreDataNm": "",
+        "sort": "",
+        "relRadio": "",
+        "orgFullName": "",
+        "orgFilter": "",
+        "org": "",
+        "orgSearch": "",
+        "currentPage": page,
+        "perPage": per_page,
+        "brm": "",
+        "instt": "",
+        "svcType": "",
+        "kwrdArray": "",
+        "extsn": "",
+        "coreDataNmArray": "",
+        "operator": "OR",
+        "pblonsipScopeCode": "",
+    }
+    url = f"{DATA_GO_KR_SEARCH_URL}?{urlencode(params)}"
     try:
-        with urlopen(request, timeout=10) as response:  # noqa: S310 - URL is operator-configured.
-            raw_text = response.read().decode("utf-8")
-        payload = json.loads(raw_text)
-    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError, OSError):
-        return DatasetSearchResult(
-            status="error",
-            query=keyword,
-            items=[],
-            message="공공데이터포털 검색 API 호출 또는 응답 해석에 실패했습니다. endpoint/key 설정을 확인해 주세요.",
-        )
-
-    return normalize_dataset_search_response(payload, keyword)
+        html = _read_text_url(url)
+    except (HTTPError, URLError, TimeoutError, OSError):
+        return DatasetSearchResult(status="error", query=keyword, items=[], message="data.go.kr 검색 페이지 호출에 실패했습니다. 네트워크, 프록시 또는 포털 접근 상태를 확인해 주세요.")
+    return parse_data_go_kr_search_html(html, keyword)
 
 
 def sanitize_url_for_response(url: str) -> str:

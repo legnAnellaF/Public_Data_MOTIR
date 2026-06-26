@@ -415,6 +415,11 @@
         });
 
         requestDatasetSearch(requestedPrompt);
+      })
+      .finally(() => {
+        if (state.mainPrompt === requestedPrompt && state.currentView === "dashboard" && state.isKeywordLoading) {
+          setState({ isKeywordLoading: false });
+        }
       });
   }
 
@@ -627,6 +632,11 @@
           datasetDetailResult: null,
           datasetDetailError: "",
         });
+      })
+      .finally(() => {
+        if (state.currentView === "dashboard" && state.isDatasetSearchLoading) {
+          setState({ isDatasetSearchLoading: false });
+        }
       });
   }
 
@@ -695,6 +705,11 @@
             ? error.message
             : "선택한 데이터셋 상세 조회에 실패했습니다.",
         });
+      })
+      .finally(() => {
+        if (state.selectedDataset === selected && state.currentView === "dashboard" && state.isDatasetDetailLoading) {
+          setState({ isDatasetDetailLoading: false });
+        }
       });
   }
 
@@ -751,6 +766,11 @@
           resourcePreviewResult: null,
           resourcePreviewError: error && error.message ? error.message : "선택한 리소스 미리보기에 실패했습니다.",
         });
+      })
+      .finally(() => {
+        if (state.selectedResource === selected && state.currentView === "dashboard" && state.isResourcePreviewLoading) {
+          setState({ isResourcePreviewLoading: false });
+        }
       });
   }
 
@@ -817,6 +837,11 @@
           isResourceVisualizationLoading: false,
           resourceVisualizationError: error && error.message ? error.message : "선택한 리소스 시각화에 실패했습니다.",
         });
+      })
+      .finally(() => {
+        if (state.selectedResource === requestedResource && state.currentView === "dashboard" && state.isResourceVisualizationLoading) {
+          setState({ isResourceVisualizationLoading: false });
+        }
       });
   }
 
@@ -872,6 +897,11 @@
             ? error.message
             : "데이터 시각화 API 호출에 실패했습니다.",
         });
+      })
+      .finally(() => {
+        if (state.selectedDatasetFile === requestedFile && state.currentView === "dashboard" && state.isVisualizationLoading) {
+          setState({ isVisualizationLoading: false });
+        }
       });
   }
 
