@@ -1487,3 +1487,36 @@ textarea:focus {
 .api-base-url-form button {
   flex: 0 0 auto;
 }
+
+.validation-status-panel {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.validation-status-list {
+  display: grid;
+  grid-template-columns: minmax(8rem, 0.8fr) 1.4fr;
+  gap: 0.45rem 0.75rem;
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.validation-status-list dt {
+  font-weight: 700;
+  color: #1f2937;
+}
+
+.validation-status-list dd {
+  margin: 0;
+  color: #4b5563;
+  overflow-wrap: anywhere;
+}
+
+.endpoint-history-list {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0;
+  padding-left: 1rem;
+  color: #4b5563;
+  font-size: 0.86rem;
+}

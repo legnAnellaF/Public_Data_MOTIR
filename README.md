@@ -698,3 +698,47 @@ Default smoke mode does not call `data.go.kr`; it checks local backend health, l
 python scripts/smoke_api_flow.py --base-url http://127.0.0.1:8000
 python scripts/smoke_api_flow.py --base-url http://127.0.0.1:8000 --live-data-go-kr --query "서울 부동산 가격"
 ```
+
+## 시연 직전 체크리스트
+
+### Codespaces 실행
+
+1. 백엔드: `python -m uvicorn backend.app:app --host 0.0.0.0 --port 8000` 로 8000 포트를 실행합니다.
+2. 프론트엔드: `cd public-data-dashboard && python -m http.server 5173` 또는 현재 정적 서버 방식으로 5173 포트를 실행합니다.
+3. Codespaces **Ports** 탭에서 8000과 5173 포트를 모두 **Public**으로 설정합니다.
+4. CORS가 막히면 백엔드 실행 전에 프론트 주소를 포함해 설정합니다. 예: `ALLOWED_ORIGINS=https://YOUR-5173-preview.app.github.dev,http://localhost:5173`.
+5. 프론트가 잘못된 백엔드를 보고 있으면 브라우저 콘솔에서 확인/수정합니다.
+   - 확인: `localStorage.getItem('PUBLIC_DATA_API_BASE_URL')`
+   - 적용: `localStorage.setItem('PUBLIC_DATA_API_BASE_URL', 'https://YOUR-8000-preview.app.github.dev')` 후 새로고침
+   - 초기화: `localStorage.removeItem('PUBLIC_DATA_API_BASE_URL')` 후 새로고침
+
+### 브라우저 수동 확인 순서
+
+1. 데모 로그인/회원가입 화면에서 계정을 만들고 로그인합니다.
+2. 프롬프트 입력 화면에서 “서울 부동산 가격” 같은 자연어 프롬프트를 입력합니다.
+3. 분석 목차 또는 검증 상태 패널에서 AI keyword 실패 시 fallback keyword가 표시되는지 확인합니다.
+4. “API 연결 상태”에서 `/api/health`가 성공하는지 확인합니다.
+5. “data.go.kr 연결 확인” 버튼을 눌러 live 진단 결과 또는 Codespaces/WAF 제한 안내를 확인합니다.
+6. 공공데이터 후보 검색 결과가 표시되는지 확인합니다.
+7. 후보 제목이 “데이터찾기/로그인/사이트맵” 같은 generic navigation 항목으로 채워지지 않는지 확인합니다.
+8. 후보 하나를 선택합니다.
+9. 선택한 데이터셋 상세 metadata와 resource 후보가 표시되는지 확인합니다.
+10. resource 카드에서 preview 가능/제한, visualize 가능/제한, 미지원 사유를 확인합니다.
+11. CSV/TSV/JSON resource의 “미리보기”를 눌러 표본 행과 bytes/content-type/source URL metadata를 확인합니다.
+12. “이 리소스로 시각화”를 눌러 차트/표/metadata가 갱신되는지 확인합니다.
+13. 추가 프롬프트에 “지역별 차이도 비교해줘” 같은 요청을 입력합니다.
+14. 분석 목차와 데이터 코멘트가 추가 프롬프트 관점으로 갱신되는지 확인합니다.
+15. 원격 Excel 또는 API key가 필요한 resource가 제한될 때 CSV/XLS/XLSX 직접 업로드 대안 경로를 확인합니다.
+16. “검증 상태” 패널의 최근 endpoint 상태에서 오래 남은 pending/timeout 요청이 없는지 확인합니다.
+
+### 문제 발생 시 빠른 진단
+
+- `/api/health` 실패: 검증 상태 패널의 API base URL과 Codespaces 8000 포트 Public 여부를 먼저 봅니다. 백엔드가 실행 중인지 터미널 로그도 확인합니다.
+- CORS 실패: 브라우저 콘솔의 CORS 메시지와 백엔드 `ALLOWED_ORIGINS` 값에 현재 5173 preview origin이 포함되어 있는지 확인합니다.
+- data.go.kr diagnostic 실패: `reason_code`가 `DATA_PORTAL_NETWORK_ERROR` 또는 timeout이면 Codespaces outbound/WAF 제한일 수 있습니다. 앱 기본 기능 실패와 분리해서 판단합니다.
+- keyword API 503: `GOOGLE_API_KEY` 미설정이면 예상 가능한 제한입니다. 화면에 fallback keyword가 표시되고 후보 검색이 계속 진행되는지 확인합니다.
+- search 503: 검증 상태 패널과 백엔드 로그의 `reason_code`를 봅니다. 기본 smoke는 live data.go.kr를 호출하지 않으므로 live 연결 문제와 코드 문제를 분리합니다.
+- detail 실패: 선택 후보의 URL이 `https://www.data.go.kr` 상세 URL인지 확인합니다. redirect 후 최종 URL도 data.go.kr가 아니면 차단됩니다.
+- preview/visualize unsupported: resource 카드의 format과 `unsupported_reason`을 봅니다. CSV/TSV/JSON만 원격 자동 처리하고 Excel은 직접 업로드를 사용합니다.
+- resource private host blocked: localhost/private IP/link-local/multicast/reserved/unspecified host는 SSRF 방어로 차단되는 것이 정상입니다.
+- request timeout: 검증 상태 패널의 최근 endpoint 상태에서 timeout/오래 걸리는 요청을 확인하고, 백엔드 실행 상태와 외부 포털 연결 상태를 분리해 봅니다.

@@ -38,6 +38,7 @@
     apiBaseUrlSource,
     apiHealth,
     dataPortalDiagnostic,
+    apiRequestHistory,
     onApiConnectionCheck,
     onDataPortalDiagnosticCheck,
     onApiBaseUrlSave,
@@ -87,10 +88,86 @@
     const rightColumn = document.createElement("div");
     rightColumn.className = "dashboard-column right-column";
 
-    leftColumn.append(createApiConnectionPanel(), createOutlinePanel(mainPrompt), createAdditionalPromptPanel());
+    leftColumn.append(createApiConnectionPanel(), createValidationStatusPanel(), createOutlinePanel(mainPrompt), createAdditionalPromptPanel());
     rightColumn.append(createDatasetSearchPanel(), createVisualizationPanel(), createCommentPanel(mainPrompt));
     layout.append(leftColumn, rightColumn);
     page.append(header, layout);
+
+
+    function createValidationStatusPanel() {
+      const wrapper = document.createElement("div");
+      wrapper.className = "validation-status-panel";
+      const helper = window.PublicDataDashboard.ValidationHelpers;
+      const summary = helper && helper.buildValidationSummary
+        ? helper.buildValidationSummary({
+            apiBaseUrl,
+            apiBaseUrlSource,
+            apiHealth,
+            dataPortalDiagnostic,
+            isKeywordLoading,
+            keywordResult,
+            keywordFallback,
+            keywordError,
+            isDatasetSearchLoading,
+            datasetSearchResult,
+            datasetSearchError,
+            selectedDataset,
+            isDatasetDetailLoading,
+            datasetDetailResult,
+            datasetDetailError,
+            selectedResource,
+            isResourcePreviewLoading,
+            resourcePreviewResult,
+            resourcePreviewError,
+            isVisualizationLoading,
+            isResourceVisualizationLoading,
+            visualizationResult,
+            visualizationError,
+            resourceVisualizationError,
+            additionalPrompts,
+          })
+        : [];
+
+      const list = document.createElement("dl");
+      list.className = "validation-status-list";
+      summary.forEach((item) => {
+        const dt = document.createElement("dt");
+        dt.textContent = `${item.icon} ${item.label}`;
+        const dd = document.createElement("dd");
+        dd.textContent = item.details || "-";
+        list.append(dt, dd);
+      });
+      wrapper.appendChild(list);
+
+      const note = document.createElement("p");
+      note.className = "muted-text compact";
+      note.textContent = "data.go.kr live 호출은 백엔드에서만 수행되며 Codespaces outbound/WAF 영향으로 제한될 수 있습니다. API key/serviceKey가 필요한 리소스는 자동 preview/visualize가 제한됩니다.";
+      wrapper.appendChild(note);
+
+      const historyTitle = document.createElement("h4");
+      historyTitle.textContent = "최근 endpoint 상태";
+      wrapper.appendChild(historyTitle);
+      const history = helper && helper.summarizeRequestHistory ? helper.summarizeRequestHistory(apiRequestHistory || []) : (apiRequestHistory || []);
+      if (!history.length) {
+        wrapper.appendChild(createDatasetStatus("empty", "아직 기록된 API 요청이 없습니다."));
+      } else {
+        const requestList = document.createElement("ul");
+        requestList.className = "endpoint-history-list";
+        history.forEach((entry) => {
+          const li = document.createElement("li");
+          const status = entry.status === "success" ? "✅" : entry.status === "pending" ? "⏳" : entry.status === "long-pending" ? "⚠️" : entry.status === "timeout" ? "❌" : "❌";
+          li.textContent = `${status} ${entry.method || "GET"} ${entry.endpoint || entry.path || "endpoint"} · ${entry.status}${entry.http_status ? ` · HTTP ${entry.http_status}` : ""} · ${entry.elapsed_ms != null ? `${entry.elapsed_ms}ms` : "진행 중"}${entry.status === "long-pending" ? " · 오래 걸리는 요청" : ""}`;
+          requestList.appendChild(li);
+        });
+        wrapper.appendChild(requestList);
+      }
+
+      return window.PublicDataDashboard.Panel({
+        title: "검증 상태",
+        children: wrapper,
+        className: "validation-status-shell",
+      });
+    }
 
 
     function createApiConnectionPanel() {
@@ -527,7 +604,7 @@
       wrapper.appendChild(heading);
 
       if (!resources.length) {
-        wrapper.appendChild(createDatasetStatus("empty", "표시할 다운로드/API 링크 후보가 없습니다. 실제 endpoint 연결은 후속 작업에서 보강합니다."));
+        wrapper.appendChild(createDatasetStatus("empty", "표시할 다운로드/API 링크 후보가 없습니다. 후보 검색은 성공해도 preview 가능한 resource가 없을 수 있습니다."));
         return wrapper;
       }
 
@@ -590,7 +667,7 @@
         if (!isPreviewableResource(item)) {
           const hint = document.createElement("p");
           hint.className = "resource-preview-hint";
-          hint.textContent = "원격 미리보기/자동 분석은 CSV/TSV/JSON만 지원합니다. 원격 Excel은 아직 자동 분석하지 않으며 직접 파일 업로드를 사용하세요.";
+          hint.textContent = "원격 미리보기/자동 분석은 CSV/TSV/JSON만 지원합니다. API key/serviceKey가 필요한 resource와 원격 Excel은 제한되며 Excel은 직접 파일 업로드를 사용하세요.";
           card.appendChild(hint);
         }
 
@@ -825,7 +902,7 @@
       uploadTitle.textContent = "직접 파일 업로드 (대안 경로)";
 
       const uploadHint = document.createElement("span");
-      uploadHint.textContent = "지원 형식: .csv, .xlsx, .xls";
+      uploadHint.textContent = "지원 형식: .csv, .xlsx, .xls · 원격 Excel은 이 업로드 경로를 사용하세요";
 
       uploadCopy.append(uploadTitle, uploadHint);
 

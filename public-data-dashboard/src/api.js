@@ -4,6 +4,37 @@
   const DEFAULT_API_BASE_URL = "http://localhost:8000";
   const API_BASE_URL_OVERRIDE_KEY = "PUBLIC_DATA_API_BASE_URL";
   const DEFAULT_REQUEST_TIMEOUT_MS = 30000;
+  const requestHistory = [];
+  let nextRequestId = 1;
+
+  function sanitizeEndpoint(path) {
+    const text = String(path || "");
+    try {
+      const url = new URL(text, getApiBaseUrl());
+      const sensitive = new Set(["key", "apikey", "api_key", "servicekey", "service_key", "token", "secret", "password"]);
+      url.searchParams.forEach((value, key) => {
+        if (sensitive.has(key.toLowerCase())) url.searchParams.set(key, "REDACTED");
+      });
+      return `${url.pathname}${url.search}`;
+    } catch (error) {
+      return text.split("?")[0];
+    }
+  }
+
+  function rememberRequest(entry) {
+    requestHistory.push(entry);
+    while (requestHistory.length > 10) requestHistory.shift();
+    return entry;
+  }
+
+  function getRequestHistory() {
+    return requestHistory.map((item) => ({ ...item }));
+  }
+
+  function updateRequest(entry, patch) {
+    Object.assign(entry, patch);
+    return entry;
+  }
 
   function normalizeApiBaseUrl(value) {
     const text = typeof value === "string" ? value.trim() : "";
@@ -117,15 +148,32 @@
     delete fetchOptions.timeoutMs;
 
     let response;
+    const startedAtMs = Date.now();
+    const historyEntry = rememberRequest({
+      id: nextRequestId++,
+      endpoint: sanitizeEndpoint(path),
+      method: fetchOptions.method || "GET",
+      status: "pending",
+      started_at: new Date(startedAtMs).toISOString(),
+      started_at_ms: startedAtMs,
+      elapsed_ms: null,
+      http_status: null,
+      message: "요청 진행 중",
+    });
 
     try {
       response = await fetch(`${getApiBaseUrl()}${path}`, fetchOptions);
+      updateRequest(historyEntry, { http_status: response.status });
     } catch (error) {
+      const elapsed = Date.now() - startedAtMs;
       if (error && error.name === "AbortError") {
+        updateRequest(historyEntry, { status: "timeout", elapsed_ms: elapsed, message: "요청 시간이 초과되었습니다." });
         throw new Error("요청 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.");
       }
       const baseUrl = getApiBaseUrl();
-      throw new Error(`백엔드 API에 연결할 수 없습니다. API base URL과 배포 상태를 확인하세요. (${baseUrl}) ${toUserMessage(error, "네트워크 오류")}`);
+      const message = `백엔드 API에 연결할 수 없습니다. API base URL과 배포 상태를 확인하세요. (${baseUrl}) ${toUserMessage(error, "네트워크 오류")}`;
+      updateRequest(historyEntry, { status: "error", elapsed_ms: elapsed, message });
+      throw new Error(message);
     } finally {
       clearTimeout(timeoutId);
     }
@@ -133,9 +181,12 @@
     const payload = await readJsonResponse(response, fallbackMessage);
 
     if (!response.ok) {
-      throw new Error(normalizeApiErrorPayload(payload, fallbackMessage));
+      const message = normalizeApiErrorPayload(payload, fallbackMessage);
+      updateRequest(historyEntry, { status: "error", elapsed_ms: Date.now() - startedAtMs, http_status: response.status, message });
+      throw new Error(message);
     }
 
+    updateRequest(historyEntry, { status: "success", elapsed_ms: Date.now() - startedAtMs, http_status: response.status, message: "성공" });
     return payload;
   }
 
@@ -267,5 +318,6 @@
     previewDatasetResource,
     visualizeDatasetResource,
     visualizeDataset,
+    getRequestHistory,
   };
 })();
