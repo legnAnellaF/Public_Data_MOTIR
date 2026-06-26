@@ -227,16 +227,27 @@ def search_datasets(request: DatasetSearchRequest) -> dict[str, Any]:
     return payload
 
 
+def _looks_like_http_url(value: Any) -> bool:
+    text = str(value).strip().lower() if isinstance(value, (str, int, float)) else ""
+    return text.startswith("http://") or text.startswith("https://")
+
+
 def _extract_dataset_identifier(request: DatasetDetailRequest) -> str:
-    for value in (request.dataset_id, request.url):
-        if isinstance(value, str) and value.strip():
-            return value.strip()
+    if isinstance(request.url, str) and request.url.strip():
+        return request.url.strip()
 
     raw = request.raw if isinstance(request.raw, dict) else {}
-    for key in ("id", "datasetId", "dataId", "serviceKey", "infId", "dtstId", "url", "link", "detailUrl", "apiUrl", "endpoint", "상세URL"):
+    for key in ("detailUrl", "url", "link"):
         value = raw.get(key)
-        if isinstance(value, (str, int, float)) and str(value).strip():
+        if _looks_like_http_url(value):
             return str(value).strip()
+
+    for value in raw.values():
+        if _looks_like_http_url(value):
+            return str(value).strip()
+
+    if isinstance(request.dataset_id, str) and request.dataset_id.strip() and _looks_like_http_url(request.dataset_id):
+        return request.dataset_id.strip()
     return ""
 
 

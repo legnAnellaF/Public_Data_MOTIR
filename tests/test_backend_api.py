@@ -234,11 +234,10 @@ def test_dataset_detail_missing_identifier_returns_400():
 def test_dataset_detail_requires_detail_url_for_live_lookup():
     response = client.post("/api/datasets/detail", json={"dataset_id": "ds-1"})
 
-    assert response.status_code == 503
+    assert response.status_code == 400
     body = response.json()["detail"]
     assert body["status"] == "error"
-    assert body["resources"] == []
-    assert "상세 URL" in body["message"]
+    assert "url" in body["message"]
 
 
 
@@ -282,22 +281,146 @@ def test_dataset_detail_success_with_mocked_client(monkeypatch):
     from backend.public_data_portal import DatasetDetailResult
 
     def fake_fetch(identifier):
-        assert identifier == "ds-1"
+        assert identifier == "https://www.data.go.kr/data/1/fileData.do"
         return DatasetDetailResult(
             status="success",
-            dataset={"id": "ds-1", "title": "서울 빈집", "description": "", "provider": "서울시", "category": "주택", "format": "CSV", "updated_at": None, "url": "https://example.test/ds-1"},
+            dataset={"id": "ds-1", "title": "서울 빈집", "description": "", "provider": "서울시", "category": "주택", "format": "CSV", "updated_at": None, "url": "https://www.data.go.kr/data/1/fileData.do"},
             resources=[{"name": "CSV", "format": "CSV", "url": "https://example.test/file.csv", "description": "", "is_downloadable": True, "is_api": False}],
         )
 
     monkeypatch.setattr("backend.app.fetch_dataset_detail", fake_fetch)
 
-    response = client.post("/api/datasets/detail", json={"dataset_id": "ds-1"})
+    response = client.post("/api/datasets/detail", json={"dataset_id": "ds-1", "url": "https://www.data.go.kr/data/1/fileData.do"})
 
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "success"
     assert body["dataset"]["title"] == "서울 빈집"
     assert body["resources"][0]["is_downloadable"] is True
+
+
+
+def test_dataset_detail_blocks_unsafe_detail_urls(monkeypatch):
+    called = False
+
+    def fake_urlopen(*args, **kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("unsafe detail URL must not be fetched")
+
+    monkeypatch.setattr("backend.public_data_portal.urlopen", fake_urlopen)
+    for url in ("http://127.0.0.1/admin?token=SECRET", "http://169.254.169.254/latest/meta-data"):
+        response = client.post("/api/datasets/detail", json={"url": url})
+        assert response.status_code == 503
+        body = response.json()["detail"]
+        assert body["status"] == "error"
+        assert "SECRET" not in str(body)
+    assert called is False
+
+
+def test_dataset_detail_allows_https_data_go_kr_detail_url(monkeypatch):
+    from backend.public_data_portal import DatasetDetailResult
+
+    def fake_fetch(identifier):
+        assert identifier == "https://www.data.go.kr/data/123/fileData.do"
+        return DatasetDetailResult(status="success", dataset={"title": "ok", "url": identifier}, resources=[])
+
+    monkeypatch.setattr("backend.app.fetch_dataset_detail", fake_fetch)
+    response = client.post("/api/datasets/detail", json={"url": "https://www.data.go.kr/data/123/fileData.do"})
+
+    assert response.status_code == 200
+    assert response.json()["dataset"]["url"] == "https://www.data.go.kr/data/123/fileData.do"
+
+
+def test_dataset_detail_blocks_unsafe_redirect(monkeypatch):
+    from backend.public_data_portal import fetch_dataset_detail
+
+    monkeypatch.setattr("backend.public_data_portal._is_safe_hostname", lambda hostname: True)
+    monkeypatch.setattr("backend.public_data_portal.urlopen", lambda request, timeout=0: FakePreviewResponse(b"<h2>bad</h2>", "text/html", "http://127.0.0.1/private"))
+
+    result = fetch_dataset_detail("https://www.data.go.kr/data/123/fileData.do")
+
+    assert result.status == "error"
+    assert result.resources == []
+
+
+def test_dataset_detail_prefers_request_url_over_dataset_id(monkeypatch):
+    from backend.public_data_portal import DatasetDetailResult
+
+    def fake_fetch(identifier):
+        assert identifier == "https://www.data.go.kr/data/123/apiData.do"
+        return DatasetDetailResult(status="success", dataset={"title": "url wins"}, resources=[])
+
+    monkeypatch.setattr("backend.app.fetch_dataset_detail", fake_fetch)
+    response = client.post("/api/datasets/detail", json={"dataset_id": "ds-1", "url": "https://www.data.go.kr/data/123/apiData.do"})
+
+    assert response.status_code == 200
+    assert response.json()["dataset"]["title"] == "url wins"
+
+
+def test_parse_current_detail_links_before_shortcuts():
+    from backend.public_data_portal import parse_data_go_kr_search_html
+
+    html = """
+    <ul class="result-list">
+      <li class="result-item">
+        <a href="/download/123">바로 다운로드</a>
+        <a href="/data/123/fileData.do">서울 파일데이터</a>
+        <span>제공기관 서울특별시</span><span>확장자 CSV</span>
+      </li>
+      <li class="result-item">
+        <a href="https://www.data.go.kr/data/456/apiData.do">부산 오픈API</a>
+        <a href="/preview/456">미리보기</a>
+        <span>제공기관 부산광역시</span>
+      </li>
+    </ul>
+    """
+
+    result = parse_data_go_kr_search_html(html, "데이터")
+
+    assert result.items[0]["url"] == "https://www.data.go.kr/data/123/fileData.do"
+    assert result.items[1]["url"] == "https://www.data.go.kr/data/456/apiData.do"
+
+
+def test_parse_search_does_not_treat_result_list_container_as_item():
+    from backend.public_data_portal import parse_data_go_kr_search_html
+
+    html = """
+    <ul class="result-list">
+      <li class="result-item">
+        <a href="/data/111/fileData.do">첫 번째 데이터</a>
+        <span>제공기관 첫기관</span><span>분류체계 교통</span><p>첫 설명입니다.</p>
+      </li>
+      <li class="result-item">
+        <a href="/data/222/fileData.do">두 번째 데이터</a>
+        <span>제공기관 둘기관</span><span>분류체계 보건</span><p>둘 설명입니다.</p>
+      </li>
+    </ul>
+    """
+
+    result = parse_data_go_kr_search_html(html, "테스트")
+
+    assert len(result.items) == 2
+    assert result.items[0]["title"] == "첫 번째 데이터"
+    assert result.items[0]["provider"] == "첫기관"
+    assert "두 번째 데이터" not in result.items[0]["description"]
+
+
+def test_detail_extensionless_download_preserves_declared_format():
+    from backend.public_data_portal import parse_data_go_kr_detail_html
+
+    html = """
+    <main>
+      <h2>서울 CSV 데이터</h2>
+      <div>제공기관 서울특별시 제공형태 CSV 수정일 2026-01-02</div>
+      <a href="https://www.data.go.kr/download/123" title="파일 다운로드">다운로드</a>
+    </main>
+    """
+
+    result = parse_data_go_kr_detail_html(html, "https://www.data.go.kr/data/123/fileData.do")
+
+    assert result.dataset["format"] == "CSV"
+    assert result.resources[0]["format"] == "CSV"
 
 
 class FakePreviewResponse:
