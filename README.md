@@ -646,3 +646,16 @@ curl "http://localhost:8000/api/diagnostics/data-portal?query=서울%20부동산
 2. 같은 패널의 **data.go.kr 연결 확인** 버튼을 클릭합니다.
 3. diagnostics 결과의 후보 count와 첫 후보 제목을 확인합니다.
 4. 공공데이터 검색, detail, resource preview, visualize 순서로 확인합니다.
+
+### 프롬프트 기반 분석 UX 수동 검증 절차
+
+이번 UX에서는 `/api/keywords`가 `GOOGLE_API_KEY` 미설정 또는 외부 AI 오류로 실패해도 화면 흐름을 멈추지 않고 deterministic fallback keyword로 계속 진행합니다. 예를 들어 `서울 부동산 가격`은 불용어와 긴 문장을 줄여 `서울 부동산 가격` 같은 검색어로 후보 검색, 목차, 코멘트에 사용됩니다.
+
+1. `GOOGLE_API_KEY` 없이 backend와 frontend를 실행한 뒤 프롬프트 `서울 부동산 가격`을 입력합니다.
+2. 키워드 영역에 “AI 키워드 추출은 실패했지만 입력 프롬프트 기반 검색으로 계속 진행합니다.”와 fallback keyword가 표시되는지 확인합니다.
+3. fallback keyword로 공공데이터 후보 검색이 계속 진행되고, 분석 목차가 정적 문구가 아니라 프롬프트/키워드 기반으로 생성되는지 확인합니다.
+4. `tests/fixtures/visualize_sample.csv` 같은 CSV를 직접 업로드해 시각화한 뒤 데이터 코멘트가 최대/최소값, chart_type, labels/table_data를 근거로 갱신되는지 확인합니다.
+5. 추가 프롬프트 대화에 `지역별 차이를 비교해줘`를 입력하고 전송합니다.
+6. 분석 목차와 데이터 코멘트에 “지역별 차이 비교” 관점이 반영되고, 추가 프롬프트 전송만으로 data.go.kr 검색이나 resource 다운로드가 자동 반복되지 않는지 확인합니다.
+7. 공공데이터 후보를 선택한 뒤 상세/resource 영역에서 `미리보기`와 `이 리소스로 시각화` 안내가 보이는지 확인합니다. URL이 없거나 CSV/TSV/JSON이 아닌 형식은 미지원 안내가 표시되어야 합니다.
+8. 로컬 파일 업로드는 “직접 파일 업로드 (대안 경로)”로 유지되며 기존 CSV/XLS/XLSX 시각화가 계속 동작하는지 확인합니다.
