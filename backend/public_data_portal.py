@@ -600,16 +600,19 @@ def _resource_support(fmt: str, is_api: bool, url: str, context: str = "") -> di
     if is_data_go_kr_portal_page_url(url):
         return {"is_previewable": False, "is_visualizable": False, "unsupported_reason": "공공데이터포털 상세/목록 페이지 URL은 직접 데이터 리소스가 아닙니다. 상세 페이지에서 실제 파일/API 리소스를 선택해 주세요.", "reason_code": _PORTAL_PAGE_REASON_CODE, "requires_api_key": False}
     requires_key = bool(re.search(r"servicekey|apikey|api_key|인증키|활용신청", f"{url} {context}", re.IGNORECASE))
-    previewable = upper in {"CSV", "TSV", "JSON"} and not requires_key
+    is_openapi = is_api or upper in {"API", "XML"} or "openapi" in f"{url} {context}".lower()
+    previewable = upper in {"CSV", "TSV", "JSON"} and not requires_key and not is_openapi
     visualizable = previewable
     reason = ""
-    if requires_key:
+    if is_openapi:
+        reason = "OpenAPI 후보입니다. serviceKey는 frontend에 입력하지 않고 backend 환경변수로만 호출합니다."
+    elif requires_key:
         reason = "API key가 필요한 리소스일 수 있어 자동 미리보기/시각화가 제한됩니다. 상세 페이지에서 확인하세요."
     elif upper in {"XLS", "XLSX"}:
         reason = "원격 Excel은 자동 분석하지 않으며 내려받은 뒤 직접 업로드하세요."
     elif upper not in {"CSV", "TSV", "JSON"}:
         reason = "CSV/TSV/JSON 리소스만 자동 미리보기/시각화를 지원합니다."
-    return {"is_previewable": previewable, "is_visualizable": visualizable, "unsupported_reason": reason, "reason_code": "" if previewable else ("RESOURCE_UNSUPPORTED_FORMAT" if reason else ""), "requires_api_key": requires_key}
+    return {"is_previewable": previewable, "is_visualizable": visualizable, "unsupported_reason": reason, "reason_code": "" if previewable else ("OPENAPI_BACKEND_REQUIRED" if is_openapi else ("RESOURCE_UNSUPPORTED_FORMAT" if reason else "")), "requires_api_key": requires_key, "is_openapi": is_openapi}
 
 def _normalize_format_label(fmt: str) -> str:
     upper = _clean_string(fmt).upper()
@@ -632,6 +635,9 @@ def _make_resource(name: str, fmt: str, url: str, description: str, is_api: bool
         "is_visualizable": support["is_visualizable"],
         "unsupported_reason": support["unsupported_reason"],
         "reason_code": support.get("reason_code", ""),
+        "is_openapi": support.get("is_openapi", False),
+        "requires_service_key": bool(support.get("is_openapi", False)),
+        "type": "openapi" if support.get("is_openapi", False) else ("api" if is_api else "file"),
         "source_hint": source_hint,
     }
 def parse_data_go_kr_detail_html(html: str, detail_url: str = "") -> DatasetDetailResult:
@@ -878,6 +884,9 @@ def extract_resource_links(raw: dict[str, Any]) -> list[dict[str, Any]]:
                 "is_visualizable": support["is_visualizable"],
                 "unsupported_reason": support["unsupported_reason"],
                 "reason_code": support.get("reason_code", ""),
+                "is_openapi": support.get("is_openapi", False),
+                "requires_service_key": bool(support.get("is_openapi", False)),
+                "type": "openapi" if support.get("is_openapi", False) else ("api" if is_api else "file"),
             }
         )
     return resources

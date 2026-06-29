@@ -163,17 +163,19 @@ class IntelligentVisualizerEngine:
         return final_x, final_y_list
 
     def _generate_startup_precautions(self, df, x, y_list, query):
-        """[AI 분석 및 인사이트 생성 엔진]"""
+        """Generate general public-data interpretation notes for the current sample."""
         precautions = []
-        precautions.append(f"📌 [{query} 관련 핵심 점검] 공공데이터 분석 결과, '{x}' 기준 '{', '.join(y_list)}' 지표의 변동성이 존재하므로 특정 항목에 편중된 투자는 위험할 수 있습니다.")
+        scope = query.strip() if isinstance(query, str) and query.strip() else "현재 데이터"
+        precautions.append(f"📌 [분석 주의사항] 현재 결과는 업로드/preview된 일부 행 기준이며, '{scope}' 맥락에서 '{x}' 기준 '{', '.join(y_list)}' 지표를 요약한 관찰값입니다.")
+        precautions.append("🔎 [컬럼/단위 확인] 컬럼명과 단위가 실제 지표 의미와 일치하는지 원본 문서 또는 메타데이터로 확인해야 합니다.")
         if y_list and len(df) >= 2:
             mean_val = df[y_list[0]].mean()
             max_val = df[y_list[0]].max()
             if max_val > mean_val * 3:
-                precautions.append(f"⚠️ [극단적 격차 주의] 최대값({max_val:.1f})이 평균({mean_val:.1f})의 3배 이상으로 큽니다. 상위 권역/항목이 시장을 독식하는 구조인지 확인이 필요합니다.")
+                precautions.append(f"⚠️ [이상치/격차 확인] 최대값({max_val:.1f})이 평균({mean_val:.1f})의 3배 이상입니다. 누락값, 표본 범위, 집계 기준을 함께 확인하세요.")
             else:
-                precautions.append(f"📊 [균등 분포 시장] 지표들이 비교적 균등하게 분포되어 있습니다. 입지나 단가 외에 차별화된 마케팅 전략이 요구됩니다.")
-        precautions.append(f"💡 [초보 창업 필수 체크리스트] 본 공공데이터 외에도 주변 상권 유동인구, 배달앱 입점 경쟁도, 그리고 초기 6개월치 고정비(임대료, 인건비) 확보를 반드시 점검하세요.")
+                precautions.append("📊 [표본 범위 확인] 지역/연도별 비교 시 누락값과 표본 범위가 결과에 영향을 줄 수 있습니다.")
+        precautions.append("💡 [해석 한계] 현재 결과는 원인 단정이 아니라 관찰값 요약이며, 정책·의사결정에는 원본 전체 데이터와 추가 지표 검증이 필요합니다.")
         return precautions
 
     def _determine_strategy_and_calculate(self, df, x, y_list, temporal_cols, query, core_keyword=""):

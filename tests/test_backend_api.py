@@ -769,3 +769,43 @@ def test_resource_preview_json_nested_and_cp949_csv():
     assert json_preview["headers"] == ["name", "value"]
     csv_preview = normalize_resource_preview({}, "이름,값\n서울,1\n".encode("cp949"), "CSV", 5, False)
     assert csv_preview["rows"][0][0] == "서울"
+
+
+def test_openapi_preview_missing_service_key_returns_safe_error(monkeypatch):
+    monkeypatch.delenv("DATA_GO_KR_SERVICE_KEY", raising=False)
+
+    response = client.post(
+        "/api/datasets/openapi/preview",
+        json={"resource": {"name": "테스트 OpenAPI", "url": "https://api.example.test/data", "format": "JSON", "type": "openapi", "is_openapi": True}, "limit": 50},
+    )
+
+    assert response.status_code == 503
+    body = response.json()["detail"]
+    assert body["reason_code"] == "OPENAPI_SERVICE_KEY_MISSING"
+    assert "serviceKey" in body["message"]
+    assert "DATA_GO_KR_SERVICE_KEY" in body["detail"]
+
+
+def test_normalize_openapi_records_extracts_nested_rows():
+    from backend.app import _normalize_openapi_records, _records_to_table
+
+    records = _normalize_openapi_records({"response": {"body": {"items": [{"region": "서울", "value": 100, "nested": {"skip": True}}, {"region": "부산", "value": 80}]}}})
+    columns, rows = _records_to_table(records, 100)
+
+    assert columns == ["region", "value"]
+    assert rows == [{"region": "서울", "value": 100}, {"region": "부산", "value": 80}]
+
+
+def test_visualize_large_upload_returns_json_413():
+    large_csv = b"region,value\n" + (b"seoul,1\n" * (11 * 1024 * 1024 // 8))
+
+    response = client.post(
+        "/api/visualize",
+        data={"query": "서울 집값 시각화", "core_keyword": "부동산"},
+        files={"file": ("large.csv", BytesIO(large_csv), "text/csv")},
+    )
+
+    assert response.status_code == 413
+    body = response.json()["detail"]
+    assert body["reason_code"] == "UPLOAD_TOO_LARGE"
+    assert "파일이 너무 큽니다" in body["message"]

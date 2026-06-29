@@ -953,7 +953,7 @@
 
     const helpers = window.PublicDataDashboard.AnalysisHelpers;
     const support = helpers && helpers.getResourceSupportState ? helpers.getResourceSupportState(selected) : { isPreviewable: true, unsupportedReason: "" };
-    if (!support.isPreviewable) {
+    if (!support.isPreviewable && !(selected.is_openapi || selected.type === "openapi")) {
       setState({
         selectedResource: selected,
         isResourcePreviewLoading: false,
@@ -981,7 +981,11 @@
       resourcePreviewError: "",
     });
 
-    window.PublicDataDashboard.Api.previewDatasetResource(selected, { maxRows: 10 })
+    const previewClient = selected && (selected.is_openapi || selected.type === "openapi") && window.PublicDataDashboard.Api.previewOpenApiResource
+      ? window.PublicDataDashboard.Api.previewOpenApiResource
+      : window.PublicDataDashboard.Api.previewDatasetResource;
+
+    previewClient(selected, { maxRows: 10, limit: 100 })
       .then((result) => {
         if (state.selectedResource !== selected || state.currentView !== "dashboard") {
           return;
@@ -1034,7 +1038,7 @@
 
     const helpers = window.PublicDataDashboard.AnalysisHelpers;
     const support = helpers && helpers.getResourceSupportState ? helpers.getResourceSupportState(selected) : { isVisualizable: true, unsupportedReason: "" };
-    if (!support.isVisualizable) {
+    if (!support.isVisualizable && !(selected.is_openapi || selected.type === "openapi")) {
       setState({ selectedResource: selected, isResourceVisualizationLoading: false, resourceVisualizationError: support.unsupportedReason || "이 리소스는 자동 시각화를 지원하지 않습니다." });
       return;
     }
@@ -1059,7 +1063,11 @@
       visualizationError: "",
     });
 
-    window.PublicDataDashboard.Api.visualizeDatasetResource(selected, requestedPrompt, getCoreKeyword())
+    const visualizeClient = selected && (selected.is_openapi || selected.type === "openapi") && window.PublicDataDashboard.Api.visualizeOpenApiResource
+      ? window.PublicDataDashboard.Api.visualizeOpenApiResource
+      : window.PublicDataDashboard.Api.visualizeDatasetResource;
+
+    visualizeClient(selected, requestedPrompt, getCoreKeyword(), { limit: 100 })
       .then((result) => {
         if (state.selectedResource !== requestedResource || state.currentView !== "dashboard") {
           return;

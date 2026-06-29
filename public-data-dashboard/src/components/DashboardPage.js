@@ -717,7 +717,7 @@
       const support = getResourceSupport(item);
       const flags = document.createElement("p");
       flags.className = "resource-flags";
-      flags.textContent = `${item.is_downloadable ? "다운로드 후보" : "다운로드 여부 미확정"} · ${item.is_api ? "API 후보" : "파일/링크 후보"} · 자동 미리보기 ${support.isPreviewable ? "가능" : "제한"} · 자동 시각화 ${support.isVisualizable ? "가능" : "제한"}`;
+      flags.textContent = `${item.is_downloadable ? "다운로드 후보" : "다운로드 여부 미확정"} · ${item.is_openapi || item.type === "openapi" ? "OpenAPI 후보" : (item.is_api ? "API 후보" : "파일/링크 후보")} · 자동 미리보기 ${support.isPreviewable ? "가능" : "제한"} · 자동 시각화 ${support.isVisualizable ? "가능" : "제한"}`;
 
       card.append(header, description, flags);
       if (support.unsupportedReason) {
@@ -730,8 +730,8 @@
         const previewButton = document.createElement("button");
         previewButton.type = "button";
         previewButton.className = isSameResource(item, selectedResource) ? "primary-button" : "ghost-button";
-        previewButton.textContent = isSameResource(item, selectedResource) && isResourcePreviewLoading ? "미리보기 중..." : "미리보기";
-        previewButton.disabled = isResourcePreviewLoading || !isPreviewableResource(item);
+        previewButton.textContent = item.is_openapi || item.type === "openapi" ? (isSameResource(item, selectedResource) && isResourcePreviewLoading ? "OpenAPI 미리보기 중..." : "OpenAPI로 미리보기") : (isSameResource(item, selectedResource) && isResourcePreviewLoading ? "미리보기 중..." : "미리보기");
+        previewButton.disabled = isResourcePreviewLoading || (!isPreviewableResource(item) && !(item.is_openapi || item.type === "openapi"));
         previewButton.addEventListener("click", () => onResourcePreview(item));
         card.appendChild(previewButton);
 
@@ -739,15 +739,17 @@
         visualizeButton.type = "button";
         visualizeButton.className = "resource-visualize-button ghost-button";
         const isSelectedForVisualization = isSameResource(item, selectedResource) && isResourceVisualizationLoading;
-        visualizeButton.textContent = isSelectedForVisualization ? "선택한 리소스를 분석 중..." : "이 리소스로 시각화";
-        visualizeButton.disabled = isResourceVisualizationLoading || !isVisualizableResource(item);
+        visualizeButton.textContent = item.is_openapi || item.type === "openapi" ? (isSelectedForVisualization ? "OpenAPI 분석 중..." : "OpenAPI로 가져와 시각화") : (isSelectedForVisualization ? "선택한 리소스를 분석 중..." : "이 리소스로 시각화");
+        visualizeButton.disabled = isResourceVisualizationLoading || (!isVisualizableResource(item) && !(item.is_openapi || item.type === "openapi"));
         visualizeButton.addEventListener("click", () => onResourceVisualization(item));
         card.appendChild(visualizeButton);
 
         if (!isPreviewableResource(item)) {
           const hint = document.createElement("p");
           hint.className = "resource-preview-hint";
-          hint.textContent = "원격 미리보기/자동 분석은 CSV/TSV/JSON만 지원합니다. API key/serviceKey가 필요한 resource와 원격 Excel은 제한되며 Excel은 직접 파일 업로드를 사용하세요.";
+          hint.textContent = item.is_openapi || item.type === "openapi"
+            ? "OpenAPI 호출은 backend 환경변수 DATA_GO_KR_SERVICE_KEY가 있을 때만 동작합니다. frontend에는 serviceKey를 입력하지 않습니다."
+            : "원격 미리보기/자동 분석은 CSV/TSV/JSON만 지원합니다. API key/serviceKey가 필요한 resource와 원격 Excel은 제한되며 Excel은 직접 파일 업로드를 사용하세요.";
           card.appendChild(hint);
         }
 
@@ -792,8 +794,8 @@
         return block;
       }
 
-      if (!resourcePreviewResult || !resourcePreviewResult.preview) {
-        block.appendChild(createDatasetStatus("empty", "리소스 후보의 미리보기 버튼을 누르면 CSV/TSV/JSON 일부가 여기에 표시됩니다."));
+      if (!resourcePreviewResult || (!resourcePreviewResult.preview && !(Array.isArray(resourcePreviewResult.columns) && Array.isArray(resourcePreviewResult.rows)))) {
+        block.appendChild(createDatasetStatus("empty", "리소스 후보의 미리보기 버튼을 누르면 CSV/TSV/JSON 또는 OpenAPI 일부가 여기에 표시됩니다."));
         return block;
       }
 
@@ -802,10 +804,14 @@
         : {};
       const metaText = document.createElement("p");
       metaText.className = "resource-preview-meta";
-      metaText.textContent = `content-type: ${meta.content_type || "unknown"} · bytes read: ${meta.bytes_read || 0}`;
+      metaText.textContent = resourcePreviewResult.source === "openapi"
+        ? `source: OpenAPI · sample rows: ${resourcePreviewResult.sample_rows || 0}`
+        : `content-type: ${meta.content_type || "unknown"} · bytes read: ${meta.bytes_read || 0}`;
       block.appendChild(metaText);
 
-      if (resourcePreviewResult.preview.kind === "table") {
+      if (resourcePreviewResult.source === "openapi" && Array.isArray(resourcePreviewResult.columns)) {
+        block.appendChild(createResourcePreviewTable({ headers: resourcePreviewResult.columns, rows: resourcePreviewResult.rows }));
+      } else if (resourcePreviewResult.preview.kind === "table") {
         block.appendChild(createResourcePreviewTable(resourcePreviewResult.preview));
       } else if (resourcePreviewResult.preview.kind === "json") {
         const pre = document.createElement("pre");
@@ -818,7 +824,7 @@
 
       const message = document.createElement("p");
       message.className = "resource-preview-hint";
-      message.textContent = resourcePreviewResult.preview.message || "소량 preview만 표시합니다.";
+      message.textContent = resourcePreviewResult.message || (resourcePreviewResult.preview && resourcePreviewResult.preview.message) || "소량 preview만 표시합니다.";
       block.appendChild(message);
 
       if (selectedResource && isVisualizableResource(selectedResource)) {
@@ -982,7 +988,7 @@
       uploadTitle.textContent = "직접 파일 업로드 (대안 경로)";
 
       const uploadHint = document.createElement("span");
-      uploadHint.textContent = "지원 형식: .csv, .xlsx, .xls · 원격 Excel은 이 업로드 경로를 사용하세요";
+      uploadHint.textContent = "지원 형식: .csv, .xlsx, .xls · CSV는 header+앞 1000행 샘플링 · XLS/XLSX는 10MB 이하 권장";
 
       uploadCopy.append(uploadTitle, uploadHint);
 
@@ -1004,7 +1010,7 @@
       const selectedFileText = document.createElement("p");
       selectedFileText.className = `selected-file-name ${selectedDatasetFile ? "" : "empty"}`.trim();
       selectedFileText.textContent = selectedDatasetFile
-        ? `선택된 파일: ${selectedDatasetFile.name}`
+        ? `선택된 파일: ${selectedDatasetFile.name} (${(selectedDatasetFile.size / 1024 / 1024).toFixed(2)}MB)`
         : "선택된 파일이 없습니다. CSV/XLSX/XLS 파일을 선택해 주세요.";
 
       const runButton = document.createElement("button");
@@ -1182,14 +1188,18 @@
       const data = firstDataset && Array.isArray(firstDataset.data) ? firstDataset.data : [];
       const numericData = data.map((value) => Number(value)).map((value) => (Number.isFinite(value) ? value : 0));
 
-      if (result.chart_type === "bar" && labels.length && numericData.length) {
+      if (labels.length && numericData.length) {
+        if (result.chart_type !== "bar") {
+          const fallback = document.createElement("p");
+          fallback.className = "muted-text compact";
+          fallback.textContent = `${result.chart_type || "기타"} 차트는 현재 표 + 막대 요약으로 대체 표시합니다.`;
+          card.appendChild(fallback);
+        }
         card.appendChild(createBarChart(labels, numericData));
       } else {
         const fallback = document.createElement("p");
         fallback.className = "muted-text compact";
-        fallback.textContent = labels.length && data.length
-          ? "line/pie 또는 기타 유형은 현재 요약, 라벨, 데이터셋, 표 중심으로 표시합니다."
-          : "표시 가능한 데이터가 제한적입니다. 요약/표시 가능한 항목만 보여줍니다.";
+        fallback.textContent = "표시 가능한 데이터가 제한적입니다. 요약/표시 가능한 항목만 보여줍니다.";
         card.appendChild(fallback);
       }
       return card;
@@ -1330,7 +1340,7 @@
       const card = document.createElement("div");
       card.className = "visualization-card";
       const title = document.createElement("h3");
-      title.textContent = "startup_precautions";
+      title.textContent = "분석 주의사항";
       const list = document.createElement("ul");
       list.className = "precaution-list";
       const items = Array.isArray(precautions) ? precautions : [];
@@ -1341,7 +1351,7 @@
       });
       if (!items.length) {
         const li = document.createElement("li");
-        li.textContent = "표시할 창업 유의사항이 없습니다.";
+        li.textContent = "표시할 분석 주의사항이 없습니다.";
         list.appendChild(li);
       }
       card.append(title, list);
