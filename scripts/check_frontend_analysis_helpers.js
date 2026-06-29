@@ -3,12 +3,43 @@ const fs = require('fs');
 const vm = require('vm');
 const analysisCode = fs.readFileSync('public-data-dashboard/src/analysisHelpers.js', 'utf8');
 const validationCode = fs.readFileSync('public-data-dashboard/src/validationHelpers.js', 'utf8');
+const appStateCode = fs.readFileSync('public-data-dashboard/src/appStateHelpers.js', 'utf8');
 const context = { window: {}, URL };
 vm.createContext(context);
 vm.runInContext(analysisCode, context);
 vm.runInContext(validationCode, context);
+vm.runInContext(appStateCode, context);
 const h = context.window.PublicDataDashboard.AnalysisHelpers;
 const v = context.window.PublicDataDashboard.ValidationHelpers;
+const a = context.window.PublicDataDashboard.AppStateHelpers;
+
+const liveSearch = a.normalizeDatasetSearchResult({
+  status: 'success',
+  source: 'data_go_kr_live',
+  candidate_count: 18,
+  first_candidate: { title: '서울 첫 후보' },
+  query: '서울 집값 부동산 실거래가',
+  items: [{ title: '서울 부동산 실거래가', score: 89 }],
+}, '서울 집값');
+assert.strictEqual(liveSearch.query, '서울 집값 부동산 실거래가');
+assert.strictEqual(liveSearch.items.length, 1);
+assert(a.hasRenderableDatasetCandidates(liveSearch));
+const fallbackSearch = a.normalizeDatasetSearchResult({
+  status: 'success',
+  source: 'offline_fallback',
+  is_offline_fallback: true,
+  reason_code: 'DATA_PORTAL_TIMEOUT',
+  message: 'data.go.kr live 검색이 불안정해 데모 후보로 계속 진행합니다.',
+  items: [{ title: '오프라인 서울 부동산 후보', format: 'CSV', provider: '데모', score: 70, match_reasons: ['fallback'] }],
+}, '서울 집값');
+assert.strictEqual(fallbackSearch.query, '서울 집값');
+assert.strictEqual(fallbackSearch.candidate_count, 1);
+assert(a.hasRenderableDatasetCandidates(fallbackSearch));
+const keyword503FallbackSearch = a.normalizeDatasetSearchResult({ status: 'success', items: [{ title: 'fallback keyword result' }] }, '서울 집값');
+assert(a.hasRenderableDatasetCandidates(keyword503FallbackSearch));
+assert.strictEqual(keyword503FallbackSearch.first_candidate.title, 'fallback keyword result');
+assert(!a.hasRenderableDatasetCandidates({ status: 'success', source: 'offline_fallback', is_offline_fallback: true, items: [] }));
+
 assert(h.deriveFallbackKeyword('서울 부동산 가격 데이터 보여줘').includes('서울'));
 assert(!['데이터', '보여줘'].includes(h.deriveFallbackKeyword('서울 부동산 가격 데이터 보여줘')));
 const dataset = { title: '서울 부동산 실거래가', provider: '서울시', format: 'CSV' };
