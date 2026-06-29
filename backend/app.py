@@ -34,6 +34,7 @@ from backend.public_data_portal import (
 
 
 ALLOWED_UPLOAD_EXTENSIONS = {".csv", ".xlsx", ".xls"}
+UPLOAD_VISUALIZE_MAX_BYTES = 10 * 1024 * 1024
 LOCALHOST_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
@@ -107,6 +108,16 @@ class DatasetResourceVisualizeRequest(BaseModel):
     query: str = Field("", examples=["사용자 프롬프트"])
     core_keyword: str = Field("", examples=["키워드"])
 
+
+class DatasetOpenApiRequest(BaseModel):
+    """Request body for backend-mediated data.go.kr OpenAPI preview/visualization."""
+
+    dataset_id: str | None = Field(None, examples=["dataset-id-or-null"])
+    resource: dict[str, Any] = Field(..., examples=[{"name": "OpenAPI", "format": "JSON", "url": "https://api.odcloud.kr/api/...", "type": "openapi"}])
+    limit: int = Field(100, ge=1, le=100, examples=[100])
+    query: str = Field("", examples=["사용자 프롬프트"])
+    core_keyword: str = Field("", examples=["키워드"])
+
 class DatasetDetailRequest(BaseModel):
     """Request body for public-data dataset detail lookup."""
 
@@ -142,6 +153,108 @@ def _to_jsonable(value: Any) -> Any:
 
 RESOURCE_VISUALIZE_MAX_BYTES = 5 * 1024 * 1024
 RESOURCE_VISUALIZE_SUPPORTED_FORMATS = {"CSV", "TSV", "JSON"}
+
+
+OPENAPI_DEFAULT_LIMIT = 100
+OPENAPI_SERVICE_KEY_ENV = "DATA_GO_KR_SERVICE_KEY"
+
+
+def _is_openapi_resource(resource: dict[str, Any]) -> bool:
+    text = " ".join(str(resource.get(key, "")) for key in ("type", "format", "name", "description", "url")).lower()
+    return bool(resource.get("is_openapi") or resource.get("is_api") or "openapi" in text or "api" in text)
+
+
+def _service_key() -> str:
+    return os.getenv(OPENAPI_SERVICE_KEY_ENV, "").strip()
+
+
+def _append_openapi_params(url: str, service_key: str, limit: int) -> str:
+    from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+    parts = urlsplit(url)
+    params = dict(parse_qsl(parts.query, keep_blank_values=True))
+    lowered = {key.lower() for key in params}
+    if "servicekey" not in lowered:
+        params["serviceKey"] = service_key
+    if "page" not in lowered:
+        params["page"] = "1"
+    if "pageNo" not in params and "pageno" not in lowered:
+        params["pageNo"] = "1"
+    if "perpage" not in lowered and "numofrows" not in lowered:
+        params["perPage"] = str(limit)
+        params["numOfRows"] = str(limit)
+    if "returntype" not in lowered and "type" not in lowered:
+        params["returnType"] = "json"
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(params, doseq=True), parts.fragment))
+
+
+def _normalize_openapi_records(payload: Any) -> list[dict[str, Any]]:
+    records = _extract_tabular_json(payload)
+    normalized: list[dict[str, Any]] = []
+    for row in records:
+        if isinstance(row, dict):
+            flat = {str(k): v for k, v in row.items() if isinstance(v, (str, int, float, bool, type(None)))}
+            if flat:
+                normalized.append(flat)
+    return normalized
+
+
+def _records_to_table(records: list[dict[str, Any]], limit: int) -> tuple[list[str], list[dict[str, Any]]]:
+    rows = records[:limit]
+    columns: list[str] = []
+    for row in rows:
+        for key in row:
+            if key not in columns:
+                columns.append(key)
+    return columns, rows
+
+
+def _fetch_openapi_rows(resource: dict[str, Any], limit: int) -> dict[str, Any]:
+    if not _is_openapi_resource(resource):
+        raise _safe_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "OpenAPI 리소스로 표시된 후보만 backend OpenAPI 경로에서 처리합니다.", reason_code="OPENAPI_UNSUPPORTED_RESOURCE")
+    key = _service_key()
+    if not key:
+        raise _safe_error(status.HTTP_503_SERVICE_UNAVAILABLE, "OpenAPI 호출에는 backend 환경변수 serviceKey가 필요합니다. 현재는 직접 업로드 또는 데모 흐름으로 진행할 수 있습니다.", OPENAPI_SERVICE_KEY_ENV, "OPENAPI_SERVICE_KEY_MISSING")
+    url = str(resource.get("url") or "").strip()
+    if not url:
+        raise _safe_error(status.HTTP_400_BAD_REQUEST, "OpenAPI resource.url이 필요합니다.", reason_code="OPENAPI_URL_REQUIRED")
+    try:
+        safe_url = validate_resource_url({"url": url, "format": resource.get("format") or "JSON"})
+        request_url = _append_openapi_params(safe_url, key, limit)
+        req = Request(request_url, headers={"Accept": "application/json, application/xml;q=0.6, */*;q=0.2", "User-Agent": "Public-Data-MOTIR/1.0"})
+        with urlopen(req, timeout=RESOURCE_PREVIEW_TIMEOUT_SECONDS) as response:  # noqa: S310 - validate_resource_url constrains unsafe hosts.
+            final_url = response.geturl() if hasattr(response, "geturl") else request_url
+            validate_resource_url({"url": final_url, "format": resource.get("format") or "JSON"})
+            content_type = response.headers.get("Content-Type", "") if getattr(response, "headers", None) else ""
+            raw = response.read(RESOURCE_VISUALIZE_MAX_BYTES + 1)
+    except HTTPError as exc:
+        if exc.code in {401, 403}:
+            raise _safe_error(status.HTTP_403_FORBIDDEN, "공공데이터포털 활용신청 또는 인증키 확인이 필요합니다.", str(exc.code), "OPENAPI_AUTH_REQUIRED") from None
+        raise _safe_error(status.HTTP_502_BAD_GATEWAY, "공공데이터포털 OpenAPI 호출이 실패했습니다. 직접 업로드 또는 오프라인 데모 흐름으로 계속할 수 있습니다.", str(exc.code), "OPENAPI_FETCH_FAILED") from None
+    except (TimeoutError, URLError, OSError, ValueError):
+        raise _safe_error(status.HTTP_502_BAD_GATEWAY, "공공데이터포털 OpenAPI 호출이 실패했습니다. 직접 업로드 또는 오프라인 데모 흐름으로 계속할 수 있습니다.", reason_code="OPENAPI_FETCH_FAILED") from None
+    if len(raw) > RESOURCE_VISUALIZE_MAX_BYTES:
+        raise _safe_error(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "OpenAPI 응답이 너무 큽니다. 일부 행만 요청하거나 직접 업로드 샘플링을 사용해 주세요.", reason_code="OPENAPI_RESPONSE_TOO_LARGE")
+    if "xml" in content_type.lower() or str(resource.get("format", "")).upper() == "XML":
+        raise _safe_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "XML OpenAPI 범용 정규화는 후속 PR에서 지원합니다. 현재는 JSON OpenAPI 또는 직접 업로드를 사용해 주세요.", reason_code="OPENAPI_XML_UNSUPPORTED")
+    try:
+        payload = json.loads(_decode_public_data_bytes(raw))
+        records = _normalize_openapi_records(payload)
+    except (json.JSONDecodeError, UnicodeError, ValueError):
+        raise _safe_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "OpenAPI JSON 응답을 표 형태로 변환할 수 없습니다.", reason_code="OPENAPI_PARSE_FAILED") from None
+    columns, rows = _records_to_table(records, limit)
+    if not rows or not columns:
+        raise _safe_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "OpenAPI 응답에서 미리보기 가능한 행을 찾지 못했습니다.", reason_code="OPENAPI_NO_ROWS")
+    return {"status": "success", "source": "openapi", "is_sampled": True, "sample_rows": len(rows), "columns": columns, "rows": rows, "message": "OpenAPI에서 일부 행을 가져와 미리보기합니다.", "metadata": {"source": "openapi", "resource_format": resource.get("format") or "JSON", "sample_rows": len(rows), "source_url": sanitize_url_for_response(url)}}
+
+
+def _openapi_rows_to_csv_bytes(columns: list[str], rows: list[dict[str, Any]]) -> bytes:
+    out = io.StringIO(newline="")
+    writer = csv.DictWriter(out, fieldnames=columns, extrasaction="ignore")
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({key: row.get(key, "") for key in columns})
+    return out.getvalue().encode("utf-8-sig")
 
 
 def _read_remote_resource_bytes(resource: dict[str, Any]) -> tuple[bytes, str, str, str, bool]:
@@ -375,6 +488,40 @@ def visualize_dataset_resource(request: DatasetResourceVisualizeRequest) -> dict
             except FileNotFoundError:
                 pass
 
+
+
+@app.post("/api/datasets/openapi/preview")
+def preview_openapi_resource(request: DatasetOpenApiRequest) -> dict[str, Any]:
+    """Fetch a small OpenAPI sample through the backend serviceKey boundary."""
+    return _fetch_openapi_rows(request.resource if isinstance(request.resource, dict) else {}, request.limit)
+
+
+@app.post("/api/datasets/openapi/visualize")
+def visualize_openapi_resource(request: DatasetOpenApiRequest) -> dict[str, Any]:
+    """Fetch a bounded OpenAPI sample, normalize it to CSV, then reuse the visualizer."""
+    preview = _fetch_openapi_rows(request.resource if isinstance(request.resource, dict) else {}, request.limit)
+    temp_path: str | None = None
+    try:
+        data_bytes = _openapi_rows_to_csv_bytes(preview["columns"], preview["rows"])
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as temp_file:
+            temp_path = temp_file.name
+            temp_file.write(data_bytes)
+        result = _visualize_temp_file(temp_path, request.query, request.core_keyword)
+        result.setdefault("metadata", {})
+        if isinstance(result["metadata"], dict):
+            result["metadata"].update(preview.get("metadata", {}))
+            result["metadata"].update({"source": "openapi", "is_sampled": True, "sample_rows": preview.get("sample_rows", 0)})
+        result["source"] = "openapi"
+        result["is_sampled"] = True
+        result["sample_rows"] = preview.get("sample_rows", 0)
+        return result
+    finally:
+        if temp_path:
+            try:
+                os.remove(temp_path)
+            except FileNotFoundError:
+                pass
+
 @app.post("/api/datasets/detail")
 def get_dataset_detail(request: DatasetDetailRequest) -> dict[str, Any]:
     """Return normalized metadata and resource link candidates for a selected dataset."""
@@ -403,6 +550,8 @@ async def visualize_data(
     file: UploadFile = File(...),
     query: str = Form(""),
     core_keyword: str = Form(""),
+    is_sampled: str = Form("false"),
+    sample_rows: int = Form(0),
 ) -> dict[str, Any]:
     """Analyze an uploaded CSV/Excel file and return chart-ready JSON data."""
     suffix = Path(file.filename or "").suffix.lower()
@@ -417,10 +566,21 @@ async def visualize_data(
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
             temp_path = temp_file.name
+            bytes_written = 0
             while chunk := await file.read(1024 * 1024):
+                bytes_written += len(chunk)
+                if bytes_written > UPLOAD_VISUALIZE_MAX_BYTES:
+                    raise _safe_error(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "파일이 너무 큽니다. CSV는 frontend에서 일부 행만 샘플링하거나 더 작은 파일을 사용해 주세요.", f"최대 {UPLOAD_VISUALIZE_MAX_BYTES} bytes", "UPLOAD_TOO_LARGE")
                 temp_file.write(chunk)
 
-        return _visualize_temp_file(temp_path, query, core_keyword)
+        result = _visualize_temp_file(temp_path, query, core_keyword)
+        if str(is_sampled).lower() == "true":
+            result["is_sampled"] = True
+            result["sample_rows"] = sample_rows
+            result.setdefault("metadata", {})
+            if isinstance(result["metadata"], dict):
+                result["metadata"].update({"source": "upload_sample", "is_sampled": True, "sample_rows": sample_rows})
+        return result
     except HTTPException:
         raise
     except Exception:
