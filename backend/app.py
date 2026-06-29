@@ -10,6 +10,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, status
@@ -168,6 +169,22 @@ def _service_key() -> str:
     return os.getenv(OPENAPI_SERVICE_KEY_ENV, "").strip()
 
 
+def _is_supported_openapi_endpoint(url: str) -> bool:
+    """Return whether an OpenAPI candidate URL is safe and likely auto-callable."""
+    parts = urlsplit(str(url or "").strip())
+    host = parts.netloc.lower()
+    path = parts.path.lower()
+    if not parts.scheme or not host:
+        return False
+    if host.endswith("data.go.kr") and ("api" in path or "openapi" in path):
+        return True
+    if host.endswith("odcloud.kr") and path.startswith("/api/"):
+        return True
+    if "servicekey" in parts.query.lower() and ("api" in path or "openapi" in path):
+        return True
+    return False
+
+
 def _append_openapi_params(url: str, service_key: str, limit: int) -> str:
     from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -212,12 +229,14 @@ def _records_to_table(records: list[dict[str, Any]], limit: int) -> tuple[list[s
 def _fetch_openapi_rows(resource: dict[str, Any], limit: int) -> dict[str, Any]:
     if not _is_openapi_resource(resource):
         raise _safe_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "OpenAPI 리소스로 표시된 후보만 backend OpenAPI 경로에서 처리합니다.", reason_code="OPENAPI_UNSUPPORTED_RESOURCE")
-    key = _service_key()
-    if not key:
-        raise _safe_error(status.HTTP_503_SERVICE_UNAVAILABLE, "OpenAPI 호출에는 backend 환경변수 serviceKey가 필요합니다. 현재는 직접 업로드 또는 데모 흐름으로 진행할 수 있습니다.", OPENAPI_SERVICE_KEY_ENV, "OPENAPI_SERVICE_KEY_MISSING")
     url = str(resource.get("url") or "").strip()
     if not url:
         raise _safe_error(status.HTTP_400_BAD_REQUEST, "OpenAPI resource.url이 필요합니다.", reason_code="OPENAPI_URL_REQUIRED")
+    if not _is_supported_openapi_endpoint(url):
+        raise _safe_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "이 리소스는 OpenAPI 후보로 감지되었지만 자동 호출 가능한 endpoint 형식이 아닙니다. 직접 업로드 또는 데모 흐름을 사용해 주세요.", reason_code="OPENAPI_ENDPOINT_UNSUPPORTED")
+    key = _service_key()
+    if not key:
+        raise _safe_error(status.HTTP_503_SERVICE_UNAVAILABLE, "OpenAPI 호출에는 backend 환경변수 serviceKey가 필요합니다. 현재는 직접 업로드 또는 데모 흐름으로 진행할 수 있습니다.", OPENAPI_SERVICE_KEY_ENV, "OPENAPI_SERVICE_KEY_MISSING")
     try:
         safe_url = validate_resource_url({"url": url, "format": resource.get("format") or "JSON"})
         request_url = _append_openapi_params(safe_url, key, limit)

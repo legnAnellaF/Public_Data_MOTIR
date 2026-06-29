@@ -776,7 +776,7 @@ def test_openapi_preview_missing_service_key_returns_safe_error(monkeypatch):
 
     response = client.post(
         "/api/datasets/openapi/preview",
-        json={"resource": {"name": "테스트 OpenAPI", "url": "https://api.example.test/data", "format": "JSON", "type": "openapi", "is_openapi": True}, "limit": 50},
+        json={"resource": {"name": "테스트 OpenAPI", "url": "https://api.odcloud.kr/api/test/v1", "format": "JSON", "type": "openapi", "is_openapi": True}, "limit": 50},
     )
 
     assert response.status_code == 503
@@ -784,6 +784,20 @@ def test_openapi_preview_missing_service_key_returns_safe_error(monkeypatch):
     assert body["reason_code"] == "OPENAPI_SERVICE_KEY_MISSING"
     assert "serviceKey" in body["message"]
     assert "DATA_GO_KR_SERVICE_KEY" in body["detail"]
+
+
+def test_openapi_preview_unsupported_endpoint_returns_reason_code(monkeypatch):
+    monkeypatch.setenv("DATA_GO_KR_SERVICE_KEY", "dummy-key")
+
+    response = client.post(
+        "/api/datasets/openapi/preview",
+        json={"resource": {"name": "외부 바로가기", "url": "https://geomarket.kr/user/dataset/view.do?data_sn=769", "format": "API", "type": "openapi", "is_openapi": True}, "limit": 50},
+    )
+
+    assert response.status_code == 422
+    body = response.json()["detail"]
+    assert body["reason_code"] == "OPENAPI_ENDPOINT_UNSUPPORTED"
+    assert "직접 업로드" in body["message"]
 
 
 def test_normalize_openapi_records_extracts_nested_rows():

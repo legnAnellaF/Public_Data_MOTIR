@@ -107,6 +107,7 @@
     if (code === "OPENAPI_SERVICE_KEY_MISSING") return "OpenAPI 호출에는 backend 환경변수 serviceKey가 필요합니다. 현재는 직접 업로드 또는 데모 흐름으로 진행할 수 있습니다.";
     if (code === "OPENAPI_AUTH_REQUIRED") return "공공데이터포털 활용신청 또는 인증키 확인이 필요합니다.";
     if (code === "OPENAPI_FETCH_FAILED") return "공공데이터포털 OpenAPI 호출이 실패했습니다. 직접 업로드 또는 오프라인 데모 흐름으로 계속할 수 있습니다.";
+    if (code === "OPENAPI_ENDPOINT_UNSUPPORTED") return "이 리소스는 OpenAPI 후보로 감지되었지만 자동 호출 가능한 endpoint 형식이 아닙니다. 직접 업로드 또는 데모 흐름을 사용해 주세요.";
     if (code === "OPENAPI_XML_UNSUPPORTED") return "XML OpenAPI는 현재 범용 정규화를 지원하지 않습니다. JSON OpenAPI 또는 직접 업로드를 사용해 주세요.";
     return fallbackMessage || "요청 처리 중 오류가 발생했습니다.";
   }
