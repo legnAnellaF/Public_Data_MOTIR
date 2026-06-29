@@ -5,6 +5,7 @@
   const promptHistoryStorageKey = "publicDataDashboardPromptHistory";
   const promptSessionsStorageKey = "publicDataDashboardPromptSessions";
   const demoModeStorageKey = "publicDataDashboardDemoMode";
+  let datasetSearchRequestSeq = 0;
 
   function getUserStorageKey(baseKey, userId) {
     return `${baseKey}:${encodeURIComponent(userId)}`;
@@ -746,6 +747,20 @@
     return state.keywordFallback || getFallbackKeyword(state.mainPrompt);
   }
 
+  function normalizeDatasetSearchResult(response, requestedKeyword) {
+    const helpers = window.PublicDataDashboard.AppStateHelpers;
+    if (helpers && helpers.normalizeDatasetSearchResult) {
+      return helpers.normalizeDatasetSearchResult(response, requestedKeyword);
+    }
+
+    const source = response && typeof response === "object" ? response : {};
+    return {
+      ...source,
+      query: typeof source.query === "string" && source.query.trim() ? source.query.trim() : requestedKeyword,
+      items: Array.isArray(source.items) ? source.items : [],
+    };
+  }
+
   function requestDatasetSearch(keyword, options) {
     const trimmedKeyword = (keyword || "").trim();
     if (!trimmedKeyword) {
@@ -783,6 +798,7 @@
     }
 
     const requestedKeyword = trimmedKeyword;
+    const requestSeq = ++datasetSearchRequestSeq;
     setState({
       isDatasetSearchLoading: true,
       datasetSearchResult: null,
@@ -801,13 +817,14 @@
 
     window.PublicDataDashboard.Api.searchDatasets(requestedKeyword, options || { page: 1, perPage: 10 })
       .then((result) => {
-        if (state.currentView !== "dashboard" || requestedKeyword !== (result && result.query ? result.query : requestedKeyword)) {
+        if (state.currentView !== "dashboard" || requestSeq !== datasetSearchRequestSeq) {
           return;
         }
 
+        const normalizedResult = normalizeDatasetSearchResult(result, requestedKeyword);
         setState({
           isDatasetSearchLoading: false,
-          datasetSearchResult: result,
+          datasetSearchResult: normalizedResult,
           datasetSearchError: "",
           selectedDataset: null,
           isDatasetDetailLoading: false,
@@ -822,7 +839,7 @@
         });
       })
       .catch((error) => {
-        if (state.currentView !== "dashboard") {
+        if (state.currentView !== "dashboard" || requestSeq !== datasetSearchRequestSeq) {
           return;
         }
 
@@ -843,7 +860,7 @@
         });
       })
       .finally(() => {
-        if (state.currentView === "dashboard" && state.isDatasetSearchLoading) {
+        if (state.currentView === "dashboard" && requestSeq === datasetSearchRequestSeq && state.isDatasetSearchLoading) {
           setState({ isDatasetSearchLoading: false });
         }
       });
