@@ -1161,6 +1161,13 @@ textarea:focus {
   color: var(--danger);
 }
 
+.dataset-search-status.warning,
+.dataset-search-status.info {
+  border-color: #fde68a;
+  background: #fffbeb;
+  color: #92400e;
+}
+
 .dataset-fallback-notice {
   margin: 0;
   padding: 12px 14px;
@@ -1295,6 +1302,16 @@ textarea:focus {
   border: 1px solid #bbf7d0;
   border-radius: 10px;
   background: #f8fffb;
+}
+
+.dataset-candidate-card .selected-dataset-detail-section {
+  margin-top: 4px;
+  border-color: rgba(37, 99, 235, 0.22);
+  background: #ffffff;
+}
+
+.selected-dataset-notice.in-card {
+  margin-top: 2px;
 }
 
 .selected-dataset-detail-section h3,

@@ -600,14 +600,6 @@
       items.forEach((item) => list.appendChild(createDatasetCandidateCard(item)));
       resultBox.appendChild(list);
 
-      if (selectedDataset) {
-        const notice = document.createElement("p");
-        notice.className = "selected-dataset-notice";
-        notice.textContent = "선택한 후보의 상세/resource를 확인한 뒤 CSV/TSV/JSON은 ‘미리보기’ 또는 ‘이 리소스로 시각화’를 사용할 수 있습니다.";
-        resultBox.appendChild(notice);
-        resultBox.appendChild(createSelectedDatasetDetailBlock());
-      }
-
       return resultBox;
     }
 
@@ -781,7 +773,7 @@
       }
 
       if (resourceVisualizationError) {
-        block.appendChild(createDatasetStatus("error", `리소스 시각화 실패: ${resourceVisualizationError}`));
+        block.appendChild(createResourceVisualizationStatus(resourceVisualizationError));
       }
 
       if (isResourcePreviewLoading) {
@@ -921,7 +913,27 @@
       actions.appendChild(selectButton);
 
       card.append(header, description, meta, actions);
+
+      if (isSelected) {
+        const notice = document.createElement("p");
+        notice.className = "selected-dataset-notice in-card";
+        notice.textContent = "선택한 후보의 상세/resource를 이 카드 안에서 확인합니다. 다른 후보를 클릭하면 상세 영역이 해당 카드로 이동합니다.";
+        card.appendChild(notice);
+        card.appendChild(createSelectedDatasetDetailBlock());
+      }
+
       return card;
+    }
+
+    function isOpenApiUnsupportedMessage(message) {
+      const text = String(message || "");
+      return text.includes("자동 호출 가능한 endpoint 형식이 아닙니다") || text.includes("OPENAPI_ENDPOINT_UNSUPPORTED");
+    }
+
+    function createResourceVisualizationStatus(message) {
+      const isUnsupported = isOpenApiUnsupportedMessage(message);
+      const prefix = isUnsupported ? "자동 호출 불가 안내" : "리소스 시각화 실패";
+      return createDatasetStatus(isUnsupported ? "warning" : "error", `${prefix}: ${message}`);
     }
 
     function isOpenApiCandidate(resource) {
@@ -1054,8 +1066,11 @@
 
       if (resourceVisualizationError) {
         const message = document.createElement("p");
-        message.className = "visualization-status error";
-        message.textContent = `리소스 시각화 실패: ${resourceVisualizationError}`;
+        const isUnsupported = isOpenApiUnsupportedMessage(resourceVisualizationError);
+        message.className = `visualization-status ${isUnsupported ? "warning" : "error"}`;
+        message.textContent = isUnsupported
+          ? `자동 호출 불가 안내: ${resourceVisualizationError}`
+          : `리소스 시각화 실패: ${resourceVisualizationError}`;
         resultBox.appendChild(message);
         return resultBox;
       }
