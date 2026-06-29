@@ -791,6 +791,12 @@
       isDatasetDetailLoading: false,
       datasetDetailResult: null,
       datasetDetailError: "",
+      selectedResource: null,
+      isResourcePreviewLoading: false,
+      resourcePreviewResult: null,
+      resourcePreviewError: "",
+      isResourceVisualizationLoading: false,
+      resourceVisualizationError: "",
     });
 
     window.PublicDataDashboard.Api.searchDatasets(requestedKeyword, options || { page: 1, perPage: 10 })
@@ -807,6 +813,12 @@
           isDatasetDetailLoading: false,
           datasetDetailResult: null,
           datasetDetailError: "",
+          selectedResource: null,
+          isResourcePreviewLoading: false,
+          resourcePreviewResult: null,
+          resourcePreviewError: "",
+          isResourceVisualizationLoading: false,
+          resourceVisualizationError: "",
         });
       })
       .catch((error) => {
@@ -822,6 +834,12 @@
           isDatasetDetailLoading: false,
           datasetDetailResult: null,
           datasetDetailError: "",
+          selectedResource: null,
+          isResourcePreviewLoading: false,
+          resourcePreviewResult: null,
+          resourcePreviewError: "",
+          isResourceVisualizationLoading: false,
+          resourceVisualizationError: "",
         });
       })
       .finally(() => {
@@ -916,6 +934,19 @@
       return;
     }
 
+    const helpers = window.PublicDataDashboard.AnalysisHelpers;
+    const support = helpers && helpers.getResourceSupportState ? helpers.getResourceSupportState(selected) : { isPreviewable: true, unsupportedReason: "" };
+    if (!support.isPreviewable) {
+      setState({
+        selectedResource: selected,
+        isResourcePreviewLoading: false,
+        resourcePreviewResult: null,
+        resourcePreviewError: support.unsupportedReason || "이 리소스는 자동 미리보기를 지원하지 않습니다.",
+        resourceVisualizationError: "",
+      });
+      return;
+    }
+
     if (!window.PublicDataDashboard.Api || !window.PublicDataDashboard.Api.previewDatasetResource) {
       setState({
         selectedResource: selected,
@@ -981,6 +1012,13 @@
 
     if (!selected) {
       setState({ resourceVisualizationError: "시각화할 리소스를 선택해 주세요." });
+      return;
+    }
+
+    const helpers = window.PublicDataDashboard.AnalysisHelpers;
+    const support = helpers && helpers.getResourceSupportState ? helpers.getResourceSupportState(selected) : { isVisualizable: true, unsupportedReason: "" };
+    if (!support.isVisualizable) {
+      setState({ selectedResource: selected, isResourceVisualizationLoading: false, resourceVisualizationError: support.unsupportedReason || "이 리소스는 자동 시각화를 지원하지 않습니다." });
       return;
     }
 

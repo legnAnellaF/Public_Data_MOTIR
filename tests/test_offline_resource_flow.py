@@ -167,3 +167,81 @@ def test_resource_security_errors(monkeypatch):
     large = client.post("/api/datasets/resource/visualize", json={"resource": {"url": big_url, "format": "CSV"}})
     assert large.status_code == 413
     assert large.json()["detail"]["reason_code"] == "RESOURCE_TOO_LARGE"
+
+
+def test_detail_fallback_marks_data_go_kr_detail_page_not_previewable():
+    raw = {
+        "title": "CSV _ 실거래가 정보 서울특별시 부동산",
+        "format": "FILE",
+        "provider": "서울특별시",
+        "url": "https://www.data.go.kr/data/15052419/fileData.do",
+    }
+    result = portal.normalize_dataset_detail(raw)
+    assert result.resources
+    resource = result.resources[0]
+    assert resource["is_downloadable"] is False
+    assert resource["is_previewable"] is False
+    assert resource["is_visualizable"] is False
+    assert resource["reason_code"] == "RESOURCE_UNSUPPORTED_PORTAL_PAGE"
+
+
+def test_detail_parser_filters_self_catalog_and_recommend_links():
+    html = """
+    <html><body>
+      <h1>서울 실거래가</h1><span>확장자 CSV</span>
+      <a href="https://www.data.go.kr/data/15052419/fileData.do">CSV 바로가기</a>
+      <a href="https://www.data.go.kr/catalog/15052419/fileData.json">CSV schema.org</a>
+      <a href="https://www.data.go.kr/data/15102411/fileData.do?recommendDataYn=Y">추천 데이터셋</a>
+      <a href="https://example.com/actual.csv">CSV 다운로드</a>
+    </body></html>
+    """
+    result = portal.parse_data_go_kr_detail_html(html, "https://www.data.go.kr/data/15052419/fileData.do")
+    urls = [item["url"] for item in result.resources]
+    assert urls == ["https://example.com/actual.csv"]
+
+
+def test_preview_rejects_data_go_kr_detail_page_before_fetch(monkeypatch):
+    def fail_urlopen(*args, **kwargs):
+        raise AssertionError("portal page URL should be rejected before network fetch")
+
+    monkeypatch.setattr(portal, "urlopen", fail_urlopen)
+    response = client.post(
+        "/api/datasets/resource/preview",
+        json={"resource": {"name": "detail page", "format": "FILE", "url": "https://www.data.go.kr/data/15052419/fileData.do"}},
+    )
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert detail["reason_code"] == "RESOURCE_UNSUPPORTED_PORTAL_PAGE"
+    assert "상세 페이지 URL" in detail["message"]
+
+
+def test_search_expands_house_price_keyword_and_ranks_real_estate(monkeypatch):
+    html = """
+    <html><body><div class="result-list">
+      <div class="result-card"><a href="/data/1/fileData.do">서울특별시 미세먼지 정보</a><p>제공기관 서울특별시 확장자 CSV 서울 대기 환경</p></div>
+      <div class="result-card"><a href="/data/2/fileData.do">서울특별시 부동산 실거래가 정보</a><p>제공기관 서울특별시 확장자 CSV 아파트 전월세 주택 가격</p></div>
+    </div></body></html>
+    """
+    patch_urlopen(monkeypatch, {"selectDataSetList": FakeResponse(html.encode(), url="https://www.data.go.kr/tcs/dss/selectDataSetList.do", content_type="text/html")})
+    response = client.post("/api/datasets/search", json={"keyword": "서울 집값", "page": 1, "per_page": 10})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["query"] == "서울 집값 부동산 실거래가"
+    assert payload["items"][0]["title"] == "서울특별시 부동산 실거래가 정보"
+    assert any(reason.startswith("topic:") for reason in payload["items"][0]["match_reasons"])
+
+
+def test_data_portal_search_retries_once_on_timeout(monkeypatch):
+    calls = {"count": 0}
+    html = SEARCH_HTML.encode()
+
+    def flaky_urlopen(request, timeout=None):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise TimeoutError("timed out")
+        return FakeResponse(html, url="https://www.data.go.kr/tcs/dss/selectDataSetList.do", content_type="text/html")
+
+    monkeypatch.setattr(portal, "urlopen", flaky_urlopen)
+    response = client.post("/api/datasets/search", json={"keyword": "서울 부동산 가격"})
+    assert response.status_code == 200
+    assert calls["count"] == 2

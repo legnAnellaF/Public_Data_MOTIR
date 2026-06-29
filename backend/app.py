@@ -155,7 +155,11 @@ def _read_remote_resource_bytes(resource: dict[str, Any]) -> tuple[bytes, str, s
             content_type = response.headers.get("Content-Type", "") if getattr(response, "headers", None) else ""
             fmt = infer_resource_format({**resource, "url": final_url}, content_type)
             raw = response.read(RESOURCE_VISUALIZE_MAX_BYTES + 1)
-    except ValueError:
+    except ValueError as exc:
+        msg = str(exc)
+        if msg.startswith("RESOURCE_"):
+            reason, _, detail = msg.partition(":")
+            raise _safe_error(status.HTTP_422_UNPROCESSABLE_ENTITY, detail.strip() or "선택한 리소스를 자동 처리할 수 없습니다.", reason_code=reason) from None
         raise
     except HTTPError as exc:
         raise _safe_error(status.HTTP_502_BAD_GATEWAY, "resource URL 호출이 HTTP 오류를 반환했습니다.", str(exc.code), "RESOURCE_FETCH_HTTP_ERROR") from None
@@ -297,11 +301,16 @@ def preview_dataset_resource(request: DatasetResourcePreviewRequest) -> dict[str
     try:
         result = fetch_resource_preview(resource, max_rows=request.max_rows)
     except ValueError as exc:
+        msg = str(exc)
+        if msg.startswith("RESOURCE_"):
+            reason, _, detail = msg.partition(":")
+            raise _safe_error(status.HTTP_422_UNPROCESSABLE_ENTITY, detail.strip() or "선택한 리소스를 미리보기할 수 없습니다.", reason_code=reason) from None
         raise _safe_error(status.HTTP_400_BAD_REQUEST, str(exc)) from None
 
     payload = result.to_dict()
     if result.status != "success":
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=payload)
+        code = status.HTTP_422_UNPROCESSABLE_ENTITY if payload.get("reason_code") in {"RESOURCE_UNSUPPORTED_PORTAL_PAGE", "RESOURCE_URL_NOT_DIRECT_DATA", "RESOURCE_UNSUPPORTED_FORMAT"} else status.HTTP_502_BAD_GATEWAY
+        raise HTTPException(status_code=code, detail=payload)
     return payload
 
 
@@ -352,6 +361,10 @@ def visualize_dataset_resource(request: DatasetResourceVisualizeRequest) -> dict
     except HTTPException:
         raise
     except ValueError as exc:
+        msg = str(exc)
+        if msg.startswith("RESOURCE_"):
+            reason, _, detail = msg.partition(":")
+            raise _safe_error(status.HTTP_422_UNPROCESSABLE_ENTITY, detail.strip() or "선택한 리소스를 시각화할 수 없습니다.", reason_code=reason) from None
         raise _safe_error(status.HTTP_400_BAD_REQUEST, str(exc)) from None
     except Exception:
         raise _safe_error(status.HTTP_500_INTERNAL_SERVER_ERROR, "리소스 시각화 처리 중 오류가 발생했습니다.") from None

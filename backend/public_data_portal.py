@@ -28,7 +28,9 @@ from urllib.request import Request, urlopen
 DATA_GO_KR_ORIGIN = "https://www.data.go.kr"
 DATA_GO_KR_SEARCH_URL = f"{DATA_GO_KR_ORIGIN}/tcs/dss/selectDataSetList.do"
 DEFAULT_PUBLIC_DATA_PORTAL_BASE_URL = DATA_GO_KR_SEARCH_URL
-DATA_GO_KR_TIMEOUT_SECONDS = 10
+DATA_GO_KR_TIMEOUT_SECONDS = 8
+DATA_GO_KR_RETRY_TIMEOUT_SECONDS = 5
+DATA_GO_KR_RETRY_BACKOFF_SECONDS = 0.35
 DATA_GO_KR_DIAGNOSTIC_TIMEOUT_SECONDS = 5
 
 logger = logging.getLogger(__name__)
@@ -280,7 +282,30 @@ def _node_links(node: dict[str, Any]) -> list[dict[str, str]]:
     return links
 
 
-_CURRENT_DETAIL_PATH_RE = re.compile(r"^/data/\d+/(?:fileData|apiData|standardData)\.do$", re.IGNORECASE)
+_CURRENT_DETAIL_PATH_RE = re.compile(r"^/data/\d+/(?:fileData|apiData|standardData|linkedData)\.do$", re.IGNORECASE)
+_PORTAL_PAGE_REASON_CODE = "RESOURCE_UNSUPPORTED_PORTAL_PAGE"
+
+
+def is_data_go_kr_portal_page_url(url: str) -> bool:
+    """Return True when a URL is a data.go.kr page, not a direct data resource."""
+    parsed = urlsplit(_clean_string(url))
+    host = (parsed.hostname or "").lower()
+    if host not in {"www.data.go.kr", "data.go.kr"}:
+        return False
+    path = (parsed.path or "/").lower()
+    if path in {"", "/"}:
+        return True
+    portal_markers = (
+        "/data/",
+        "/tcs/dss/",
+        "/catalog/",
+        "/ugs/",
+        "/bbs/",
+        "/cmm/",
+        "/policy",
+        "/info",
+    )
+    return path.endswith(".do") or any(path.startswith(marker) for marker in portal_markers)
 
 
 def _is_current_data_go_kr_detail_url(url: str) -> bool:
@@ -312,8 +337,22 @@ def _extract_labeled_value(text: str, labels: tuple[str, ...]) -> str:
 _GENERIC_TITLES = {"데이터찾기", "목록", "상세보기", "다운로드", "활용신청", "로그인", "회원가입", "공유", "인쇄", "이전", "다음", "더보기", "미리보기"}
 _VISUAL_FORMATS = {"FILE", "CSV", "TSV", "JSON", "XLSX", "XLS", "XML"}
 
+REAL_ESTATE_SYNONYMS = ("부동산", "실거래가", "아파트", "전월세", "주택", "주택가격")
+REGION_ONLY_TOKENS = {"서울", "서울시", "서울특별시", "부산", "대구", "인천", "광주", "대전", "울산", "세종", "경기", "경기도", "강원", "충북", "충남", "전북", "전남", "경북", "경남", "제주"}
+
+def expand_public_data_keyword(keyword: str) -> str:
+    """Apply small deterministic public-data search synonyms used when AI keywords are unavailable."""
+    text = re.sub(r"\s+", " ", _clean_string(keyword))
+    if not text:
+        return ""
+    if "집값" in text:
+        additions = [term for term in ("부동산", "실거래가", "아파트", "전월세", "주택 가격") if term not in text]
+        return f"{text} {' '.join(additions[:2])}".strip()
+    return text
+
 def _query_tokens(query: str) -> list[str]:
-    return [t.lower() for t in re.split(r"\s+", _clean_string(query)) if len(t.strip()) > 1]
+    expanded = expand_public_data_keyword(query)
+    return [t.lower() for t in re.split(r"\s+", expanded) if len(t.strip()) > 1]
 
 def _is_generic_title(title: str) -> bool:
     cleaned = re.sub(r"\s+", "", _clean_string(title))
@@ -340,6 +379,15 @@ def _candidate_score(item: dict[str, Any], tokens: list[str]) -> tuple[int, list
     if dtype == "API":
         score += 3
         reasons.append("api_candidate")
+    blob = " ".join(_clean_string(item.get(field)).lower() for field in ("title", "category", "description", "provider"))
+    real_estate_matches = [term for term in REAL_ESTATE_SYNONYMS if term in blob]
+    query_has_real_estate = any(token in {"집값", "부동산", "실거래가", "아파트", "전월세", "주택", "가격"} for token in tokens)
+    if query_has_real_estate and real_estate_matches:
+        score += 18 + 4 * len(real_estate_matches)
+        reasons.append(f"topic:{','.join(real_estate_matches[:3])}")
+    elif query_has_real_estate and tokens and all(token in REGION_ONLY_TOKENS for token in tokens if token in blob):
+        score -= 10
+        reasons.append("region_only_penalty")
     return score, reasons
 
 def _dedupe_keys(item: dict[str, Any]) -> set[str]:
@@ -427,6 +475,8 @@ def _extract_urls_from_text(text: str, base_url: str = DATA_GO_KR_ORIGIN) -> lis
     return values
 
 def _looks_like_resource_url(url: str, context: str = "") -> bool:
+    if is_data_go_kr_portal_page_url(url):
+        return False
     parsed = urlsplit(url)
     lowered = f"{parsed.path}?{parsed.query} {context}".lower()
     if parsed.scheme not in {"http", "https"}:
@@ -439,6 +489,8 @@ def _looks_like_resource_url(url: str, context: str = "") -> bool:
 
 def _resource_support(fmt: str, is_api: bool, url: str, context: str = "") -> dict[str, Any]:
     upper = _clean_string(fmt).upper()
+    if is_data_go_kr_portal_page_url(url):
+        return {"is_previewable": False, "is_visualizable": False, "unsupported_reason": "공공데이터포털 상세/목록 페이지 URL은 직접 데이터 리소스가 아닙니다. 상세 페이지에서 실제 파일/API 리소스를 선택해 주세요.", "reason_code": _PORTAL_PAGE_REASON_CODE, "requires_api_key": False}
     requires_key = bool(re.search(r"servicekey|apikey|api_key|인증키|활용신청", f"{url} {context}", re.IGNORECASE))
     previewable = upper in {"CSV", "TSV", "JSON"} and not requires_key
     visualizable = previewable
@@ -449,7 +501,7 @@ def _resource_support(fmt: str, is_api: bool, url: str, context: str = "") -> di
         reason = "원격 Excel은 자동 분석하지 않으며 내려받은 뒤 직접 업로드하세요."
     elif upper not in {"CSV", "TSV", "JSON"}:
         reason = "CSV/TSV/JSON 리소스만 자동 미리보기/시각화를 지원합니다."
-    return {"is_previewable": previewable, "is_visualizable": visualizable, "unsupported_reason": reason, "requires_api_key": requires_key}
+    return {"is_previewable": previewable, "is_visualizable": visualizable, "unsupported_reason": reason, "reason_code": "" if previewable else ("RESOURCE_UNSUPPORTED_FORMAT" if reason else ""), "requires_api_key": requires_key}
 
 def _normalize_format_label(fmt: str) -> str:
     upper = _clean_string(fmt).upper()
@@ -471,6 +523,7 @@ def _make_resource(name: str, fmt: str, url: str, description: str, is_api: bool
         "is_previewable": support["is_previewable"],
         "is_visualizable": support["is_visualizable"],
         "unsupported_reason": support["unsupported_reason"],
+        "reason_code": support.get("reason_code", ""),
         "source_hint": source_hint,
     }
 def parse_data_go_kr_detail_html(html: str, detail_url: str = "") -> DatasetDetailResult:
@@ -498,6 +551,8 @@ def parse_data_go_kr_detail_html(html: str, detail_url: str = "") -> DatasetDeta
         if not any(token in context.lower() for token in _RESOURCE_HINT_TOKENS):
             continue
         for url, source_hint in urls:
+            if sanitize_url_for_response(url) == sanitize_url_for_response(detail_url) or "recommendDataYn=Y" in url:
+                continue
             if not _looks_like_resource_url(url, context):
                 continue
             safe_key = sanitize_url_for_response(url)
@@ -571,8 +626,24 @@ def _read_text_url_with_status(url: str, timeout: int = DATA_GO_KR_TIMEOUT_SECON
         status_code = getattr(response, "status", None) or getattr(response, "code", 200)
         return raw.decode(charset, errors="replace"), int(status_code), final_url
 
+
+def _with_bounded_retry(operation, *args, **kwargs):
+    """Run a portal fetch once, then retry once after a short backoff for transient timeouts/network hiccups."""
+    last_exc: BaseException | None = None
+    for attempt, timeout in enumerate((DATA_GO_KR_TIMEOUT_SECONDS, DATA_GO_KR_RETRY_TIMEOUT_SECONDS), start=1):
+        try:
+            return operation(*args, timeout=timeout, **kwargs)
+        except (HTTPError, URLError, TimeoutError, OSError) as exc:
+            last_exc = exc
+            reason_code, _ = _classify_portal_exception(exc)
+            if attempt >= 2 or reason_code == "DATA_PORTAL_HTTP_ERROR":
+                break
+            time.sleep(DATA_GO_KR_RETRY_BACKOFF_SECONDS)
+    assert last_exc is not None
+    raise last_exc
+
 def _read_text_url(url: str) -> str:
-    html, _status_code, _final_url = _read_text_url_with_status(url, DATA_GO_KR_TIMEOUT_SECONDS)
+    html, _status_code, _final_url = _with_bounded_retry(_read_text_url_with_status, url)
     return html
 
 
@@ -588,15 +659,19 @@ def validate_data_go_kr_detail_url(url: str) -> str:
     return cleaned
 
 
-def _read_data_go_kr_detail_url(url: str) -> tuple[str, str]:
+def _read_data_go_kr_detail_url_once(url: str, timeout: int = DATA_GO_KR_TIMEOUT_SECONDS) -> tuple[str, str]:
     safe_url = validate_data_go_kr_detail_url(url)
     req = Request(safe_url, headers={"Accept": "text/html,application/xhtml+xml", "User-Agent": "Mozilla/5.0 Public-Data-MOTIR/1.0"})
-    with urlopen(req, timeout=DATA_GO_KR_TIMEOUT_SECONDS) as response:  # noqa: S310 - URL and redirect target are constrained to data.go.kr HTTPS.
+    with urlopen(req, timeout=timeout) as response:  # noqa: S310 - URL and redirect target are constrained to data.go.kr HTTPS.
         final_url = response.geturl() if hasattr(response, "geturl") else safe_url
         validate_data_go_kr_detail_url(final_url)
         raw = response.read()
         charset = response.headers.get_content_charset() or "utf-8"
         return raw.decode(charset, errors="replace"), final_url
+
+
+def _read_data_go_kr_detail_url(url: str) -> tuple[str, str]:
+    return _with_bounded_retry(_read_data_go_kr_detail_url_once, url)
 
 
 def _first_value(source: dict[str, Any], keys: tuple[str, ...]) -> Any:
@@ -678,14 +753,23 @@ def extract_resource_links(raw: dict[str, Any]) -> list[dict[str, Any]]:
         if key in seen:
             continue
         seen.add(key)
+        if url and is_data_go_kr_portal_page_url(url):
+            support = _resource_support(fmt, is_api, url, description)
+            is_downloadable = False
+        else:
+            support = _resource_support(fmt, is_api, url or "", description)
         resources.append(
             {
                 "name": name,
                 "format": fmt,
                 "url": url,
                 "description": description,
-                "is_downloadable": is_downloadable,
+                "is_downloadable": is_downloadable and not is_data_go_kr_portal_page_url(url or ""),
                 "is_api": is_api,
+                "is_previewable": support["is_previewable"],
+                "is_visualizable": support["is_visualizable"],
+                "unsupported_reason": support["unsupported_reason"],
+                "reason_code": support.get("reason_code", ""),
             }
         )
     return resources
@@ -821,6 +905,7 @@ def check_data_go_kr_connectivity(query: str = "서울 부동산 가격") -> Dat
 def fetch_dataset_search(keyword: str, page: int = 1, per_page: int = 10) -> DatasetSearchResult:
     """Fetch data.go.kr public HTML search results and normalize candidate cards."""
     keyword = _clean_string(keyword)
+    keyword = expand_public_data_keyword(keyword)
     url = _build_data_go_kr_search_url(keyword, page=page, per_page=per_page)
     safe_url = sanitize_url_for_response(url)
     started = time.perf_counter()
@@ -889,6 +974,8 @@ def validate_resource_url(resource: dict[str, Any]) -> str:
         raise ValueError("resource.url이 필요합니다.")
 
     parsed = urlsplit(url)
+    if is_data_go_kr_portal_page_url(url):
+        raise ValueError(f"{_PORTAL_PAGE_REASON_CODE}: 공공데이터포털 상세 페이지 URL은 직접 미리보기할 수 없습니다. 상세 페이지에서 실제 파일/API 리소스를 선택해 주세요.")
     if parsed.scheme not in {"http", "https"}:
         raise ValueError("http:// 또는 https:// URL만 미리보기할 수 있습니다.")
     if not parsed.hostname or not _is_safe_hostname(parsed.hostname):
