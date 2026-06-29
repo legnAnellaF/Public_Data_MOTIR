@@ -18,7 +18,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from backend.data_visualizer import IntelligentVisualizerEngine
-from backend.keyword_extractor import analyze_project_idea
+from backend.keyword_extractor import (
+    KeywordExtractionResult,
+    extract_keywords_with_providers,
+)
 from backend.public_data_portal import (
     RESOURCE_PREVIEW_TIMEOUT_SECONDS,
     fetch_dataset_detail,
@@ -341,7 +344,7 @@ def health() -> dict[str, str]:
 
 
 @app.post("/api/keywords")
-def extract_keywords(request: KeywordRequest) -> dict[str, str]:
+def extract_keywords(request: KeywordRequest) -> dict[str, Any]:
     """Extract public-data-oriented keywords from a user prompt."""
     prompt = request.prompt.strip()
     if not prompt:
@@ -350,29 +353,57 @@ def extract_keywords(request: KeywordRequest) -> dict[str, str]:
             "prompt는 비어 있을 수 없습니다.",
         )
 
-    try:
-        result = analyze_project_idea(prompt)
-    except ValueError:
+    source, result, reason_codes = extract_keywords_with_providers(prompt)
+
+    if source == "fallback" and reason_codes and reason_codes[-1] == "AI_KEYWORD_PROVIDER_UNAVAILABLE":
         raise _safe_error(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "키워드 추출을 사용할 수 없습니다.",
-            "GOOGLE_API_KEY 설정을 확인한 뒤 다시 시도해 주세요.",
-        ) from None
-    except Exception:
-        raise _safe_error(
-            status.HTTP_502_BAD_GATEWAY,
-            "키워드 추출 중 외부 AI 서비스 호출에 실패했습니다.",
-            "잠시 후 다시 시도해 주세요.",
-        ) from None
+            "OPENAI_API_KEY 또는 GOOGLE_API_KEY 설정을 확인한 뒤 다시 시도해 주세요.",
+        )
+
+    if isinstance(result, KeywordExtractionResult):
+        body = result.model_dump()
+        return {
+            "status": "success",
+            "source": source,
+            "topic": body["expanded_query"],
+            "is_fallback": source == "fallback",
+            "reason_codes": reason_codes,
+            **body,
+        }
 
     topic = getattr(result, "Topic", None)
     if not topic:
-        raise _safe_error(
-            status.HTTP_502_BAD_GATEWAY,
-            "키워드 추출 결과 형식이 올바르지 않습니다.",
+        fallback_result = KeywordExtractionResult(
+            keywords=[prompt],
+            expanded_query=prompt,
+            fallback_reason="GEMINI_KEYWORD_API_FAILED",
         )
+        return {
+            "status": "success",
+            "source": "fallback",
+            "topic": prompt,
+            "is_fallback": True,
+            "reason_codes": [*reason_codes, "GEMINI_KEYWORD_API_FAILED"],
+            **fallback_result.model_dump(),
+        }
 
-    return {"status": "success", "topic": str(topic)}
+    keywords = [item for item in str(topic).split() if item]
+    return {
+        "status": "success",
+        "source": "gemini",
+        "topic": str(topic),
+        "keywords": keywords,
+        "expanded_query": str(topic),
+        "intent": "public_data_search",
+        "domain": "general",
+        "region": "",
+        "confidence": 0.7,
+        "fallback_reason": "",
+        "is_fallback": False,
+        "reason_codes": reason_codes,
+    }
 
 
 @app.get("/api/diagnostics/data-portal")

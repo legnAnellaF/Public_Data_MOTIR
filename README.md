@@ -780,3 +780,17 @@ python scripts/smoke_api_flow.py --base-url http://127.0.0.1:8000 --live-data-go
 - localStorage API base URL override는 `PUBLIC_DATA_API_BASE_URL`만 사용하고, 잘못 설정했으면 제거 후 새로고침합니다.
 - live `data.go.kr` 실패 시 오프라인 데모 경로로 전체 UX를 검증합니다.
 - 원격 Excel 또는 API key/serviceKey 필요 resource는 직접 CSV/XLS/XLSX 업로드 대안 경로로 안내합니다.
+
+## OpenAI keyword extraction provider
+
+`/api/keywords`는 backend 환경변수에 `OPENAI_API_KEY`가 있으면 OpenAI provider를 먼저 사용해 공공데이터포털 검색에 적합한 키워드를 추출합니다. `OPENAI_KEYWORD_MODEL`로 모델명을 바꿀 수 있으며 기본값은 비용/속도 우선의 작은 모델인 `gpt-5.4-mini`입니다. 모델명은 OpenAI 계정 권한과 시점에 따라 달라질 수 있으므로 환경에 맞게 조정할 수 있습니다.
+
+```bash
+OPENAI_API_KEY=
+OPENAI_KEYWORD_MODEL=gpt-5.4-mini
+# GOOGLE_API_KEY=
+```
+
+API key는 서버 환경변수 또는 커밋되지 않는 로컬 `.env`에만 설정합니다. frontend에는 OpenAI/Gemini/API key 입력 UI를 만들지 않으며 key를 localStorage, query string, frontend bundle에 노출하지 않습니다. ChatGPT Plus/Pro 구독과 OpenAI API key 및 API billing은 별도일 수 있습니다.
+
+Provider 우선순위는 OpenAI(`OPENAI_API_KEY`) → Gemini(`GOOGLE_API_KEY`) → fallback입니다. key가 없거나 외부 AI 호출이 실패하면 기존 frontend fallback 검색 흐름이 계속 동작하도록 안전한 오류 또는 fallback 응답을 반환합니다.

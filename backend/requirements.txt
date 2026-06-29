@@ -12,3 +12,5 @@ matplotlib
 requests
 pytest
 httpx
+
+openai
