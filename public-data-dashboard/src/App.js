@@ -937,6 +937,11 @@
       });
   }
 
+  function isOpenApiCandidate(resource) {
+    const item = resource && typeof resource === "object" ? resource : {};
+    return Boolean(item.is_openapi === true || item.type === "openapi" || item.reason_code === "OPENAPI_BACKEND_REQUIRED" || item.requires_service_key === true);
+  }
+
   function handleResourcePreview(resource) {
     const selected = resource || null;
 
@@ -953,7 +958,7 @@
 
     const helpers = window.PublicDataDashboard.AnalysisHelpers;
     const support = helpers && helpers.getResourceSupportState ? helpers.getResourceSupportState(selected) : { isPreviewable: true, unsupportedReason: "" };
-    if (!support.isPreviewable && !(selected.is_openapi || selected.type === "openapi")) {
+    if (!support.isPreviewable && !isOpenApiCandidate(selected)) {
       setState({
         selectedResource: selected,
         isResourcePreviewLoading: false,
@@ -981,7 +986,7 @@
       resourcePreviewError: "",
     });
 
-    const previewClient = selected && (selected.is_openapi || selected.type === "openapi") && window.PublicDataDashboard.Api.previewOpenApiResource
+    const previewClient = selected && isOpenApiCandidate(selected) && window.PublicDataDashboard.Api.previewOpenApiResource
       ? window.PublicDataDashboard.Api.previewOpenApiResource
       : window.PublicDataDashboard.Api.previewDatasetResource;
 
@@ -1038,7 +1043,7 @@
 
     const helpers = window.PublicDataDashboard.AnalysisHelpers;
     const support = helpers && helpers.getResourceSupportState ? helpers.getResourceSupportState(selected) : { isVisualizable: true, unsupportedReason: "" };
-    if (!support.isVisualizable && !(selected.is_openapi || selected.type === "openapi")) {
+    if (!support.isVisualizable && !isOpenApiCandidate(selected)) {
       setState({ selectedResource: selected, isResourceVisualizationLoading: false, resourceVisualizationError: support.unsupportedReason || "이 리소스는 자동 시각화를 지원하지 않습니다." });
       return;
     }
@@ -1063,7 +1068,7 @@
       visualizationError: "",
     });
 
-    const visualizeClient = selected && (selected.is_openapi || selected.type === "openapi") && window.PublicDataDashboard.Api.visualizeOpenApiResource
+    const visualizeClient = selected && isOpenApiCandidate(selected) && window.PublicDataDashboard.Api.visualizeOpenApiResource
       ? window.PublicDataDashboard.Api.visualizeOpenApiResource
       : window.PublicDataDashboard.Api.visualizeDatasetResource;
 

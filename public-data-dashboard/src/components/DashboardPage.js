@@ -717,7 +717,7 @@
       const support = getResourceSupport(item);
       const flags = document.createElement("p");
       flags.className = "resource-flags";
-      flags.textContent = `${item.is_downloadable ? "다운로드 후보" : "다운로드 여부 미확정"} · ${item.is_openapi || item.type === "openapi" ? "OpenAPI 후보" : (item.is_api ? "API 후보" : "파일/링크 후보")} · 자동 미리보기 ${support.isPreviewable ? "가능" : "제한"} · 자동 시각화 ${support.isVisualizable ? "가능" : "제한"}`;
+      flags.textContent = `${item.is_downloadable ? "다운로드 후보" : "다운로드 여부 미확정"} · ${isOpenApiCandidate(item) ? "OpenAPI/연계 API 후보" : (item.is_api ? "API 후보" : "파일/링크 후보")} · 자동 미리보기 ${support.isPreviewable ? "가능" : "제한"} · 자동 시각화 ${support.isVisualizable ? "가능" : "제한"}`;
 
       card.append(header, description, flags);
       if (support.unsupportedReason) {
@@ -730,8 +730,8 @@
         const previewButton = document.createElement("button");
         previewButton.type = "button";
         previewButton.className = isSameResource(item, selectedResource) ? "primary-button" : "ghost-button";
-        previewButton.textContent = item.is_openapi || item.type === "openapi" ? (isSameResource(item, selectedResource) && isResourcePreviewLoading ? "OpenAPI 미리보기 중..." : "OpenAPI로 미리보기") : (isSameResource(item, selectedResource) && isResourcePreviewLoading ? "미리보기 중..." : "미리보기");
-        previewButton.disabled = isResourcePreviewLoading || (!isPreviewableResource(item) && !(item.is_openapi || item.type === "openapi"));
+        previewButton.textContent = isOpenApiCandidate(item) ? (isSameResource(item, selectedResource) && isResourcePreviewLoading ? "OpenAPI 미리보기 중..." : "OpenAPI로 미리보기") : (isSameResource(item, selectedResource) && isResourcePreviewLoading ? "미리보기 중..." : "미리보기");
+        previewButton.disabled = isResourcePreviewLoading || (!isPreviewableResource(item) && !isOpenApiCandidate(item));
         previewButton.addEventListener("click", () => onResourcePreview(item));
         card.appendChild(previewButton);
 
@@ -739,16 +739,16 @@
         visualizeButton.type = "button";
         visualizeButton.className = "resource-visualize-button ghost-button";
         const isSelectedForVisualization = isSameResource(item, selectedResource) && isResourceVisualizationLoading;
-        visualizeButton.textContent = item.is_openapi || item.type === "openapi" ? (isSelectedForVisualization ? "OpenAPI 분석 중..." : "OpenAPI로 가져와 시각화") : (isSelectedForVisualization ? "선택한 리소스를 분석 중..." : "이 리소스로 시각화");
-        visualizeButton.disabled = isResourceVisualizationLoading || (!isVisualizableResource(item) && !(item.is_openapi || item.type === "openapi"));
+        visualizeButton.textContent = isOpenApiCandidate(item) ? (isSelectedForVisualization ? "OpenAPI 분석 중..." : "OpenAPI로 가져와 시각화") : (isSelectedForVisualization ? "선택한 리소스를 분석 중..." : "이 리소스로 시각화");
+        visualizeButton.disabled = isResourceVisualizationLoading || (!isVisualizableResource(item) && !isOpenApiCandidate(item));
         visualizeButton.addEventListener("click", () => onResourceVisualization(item));
         card.appendChild(visualizeButton);
 
         if (!isPreviewableResource(item)) {
           const hint = document.createElement("p");
           hint.className = "resource-preview-hint";
-          hint.textContent = item.is_openapi || item.type === "openapi"
-            ? "OpenAPI 호출은 backend 환경변수 DATA_GO_KR_SERVICE_KEY가 있을 때만 동작합니다. frontend에는 serviceKey를 입력하지 않습니다."
+          hint.textContent = isOpenApiCandidate(item)
+            ? "OpenAPI/연계 API 후보입니다. backend에서 serviceKey 및 endpoint 유효성을 확인한 뒤 일부 행을 가져옵니다. frontend에는 serviceKey를 입력하지 않습니다."
             : "원격 미리보기/자동 분석은 CSV/TSV/JSON만 지원합니다. API key/serviceKey가 필요한 resource와 원격 Excel은 제한되며 Excel은 직접 파일 업로드를 사용하세요.";
           card.appendChild(hint);
         }
@@ -827,11 +827,11 @@
       message.textContent = resourcePreviewResult.message || (resourcePreviewResult.preview && resourcePreviewResult.preview.message) || "소량 preview만 표시합니다.";
       block.appendChild(message);
 
-      if (selectedResource && isVisualizableResource(selectedResource)) {
+      if (selectedResource && (isVisualizableResource(selectedResource) || isOpenApiCandidate(selectedResource))) {
         const visualizeButton = document.createElement("button");
         visualizeButton.type = "button";
         visualizeButton.className = "primary-button resource-visualize-button";
-        visualizeButton.textContent = isResourceVisualizationLoading ? "선택한 리소스를 분석 중..." : "이 리소스로 시각화";
+        visualizeButton.textContent = isOpenApiCandidate(selectedResource) ? (isResourceVisualizationLoading ? "OpenAPI 분석 중..." : "OpenAPI로 가져와 시각화") : (isResourceVisualizationLoading ? "선택한 리소스를 분석 중..." : "이 리소스로 시각화");
         visualizeButton.disabled = isResourceVisualizationLoading;
         visualizeButton.addEventListener("click", () => onResourceVisualization(selectedResource));
         block.appendChild(visualizeButton);
@@ -922,6 +922,11 @@
 
       card.append(header, description, meta, actions);
       return card;
+    }
+
+    function isOpenApiCandidate(resource) {
+      const item = resource && typeof resource === "object" ? resource : {};
+      return Boolean(item.is_openapi === true || item.type === "openapi" || item.reason_code === "OPENAPI_BACKEND_REQUIRED" || item.requires_service_key === true);
     }
 
     function getResourceSupport(resource) {
@@ -1330,7 +1335,7 @@
       if (rows.length > 15) {
         const note = document.createElement("p");
         note.className = "partial-note";
-        note.textContent = `처음 15개 행만 일부만 표시합니다. 전체 행 수: ${rows.length}개`;
+        note.textContent = `화면 표시 행 수: 15개 / 분석 샘플 행 수: ${rows.length}개`;
         card.appendChild(note);
       }
       return card;
