@@ -32,10 +32,11 @@ const summary = v.buildValidationSummary({
   apiBaseUrl: 'https://codespace-8000.app.github.dev?token=abc', apiBaseUrlSource: 'localStorage',
   apiHealth: { status: 'success', message: 'ok' }, dataPortalDiagnostic: { status: 'error', message: 'DATA_PORTAL_NETWORK_ERROR' },
   keywordFallback: '서울 부동산', keywordError: 'AI 키워드 추출은 실패했지만 fallback으로 계속 진행합니다.',
-  datasetSearchResult: { items: [dataset] }, selectedDataset: dataset, datasetDetailResult: { resources: [resource] }, selectedResource: unsupportedResource,
+  datasetSearchResult: { items: [dataset], source: 'offline_fallback', is_offline_fallback: true, reason_code: 'DATA_PORTAL_TIMEOUT' }, selectedDataset: dataset, datasetDetailResult: { resources: [resource] }, selectedResource: unsupportedResource,
   resourcePreviewResult: preview, visualizationResult: visualization, additionalPrompts: ['강남만 비교'],
 });
 assert(summary.some((item) => item.label === 'keyword' && item.status === 'warning'));
+assert(summary.some((item) => item.label === 'dataset search' && item.details.includes('offline fallback candidates')));
 assert(summary.some((item) => item.label === 'selected resource' && item.details.includes('원격 Excel')));
 assert(summary.some((item) => item.label === 'resource preview' && item.details.includes('128')));
 assert(summary.some((item) => item.label === 'visualization' && item.details.includes('resource result')));

@@ -245,3 +245,34 @@ def test_data_portal_search_retries_once_on_timeout(monkeypatch):
     response = client.post("/api/datasets/search", json={"keyword": "서울 부동산 가격"})
     assert response.status_code == 200
     assert calls["count"] == 2
+
+
+def test_dataset_search_timeout_returns_demo_safe_fallback(monkeypatch):
+    def timeout_urlopen(*args, **kwargs):
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(portal, "urlopen", timeout_urlopen)
+    response = client.post("/api/datasets/search", json={"keyword": "서울 집값", "page": 1, "per_page": 10})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "success"
+    assert body["source"] == "offline_fallback"
+    assert body["is_offline_fallback"] is True
+    assert body["reason_code"] == "DATA_PORTAL_TIMEOUT"
+    assert body["items"]
+    assert body["items"][0]["title"] == "서울특별시 부동산 실거래가 정보"
+    assert body["items"][0]["is_offline_fallback"] is True
+    assert "부동산" in body["items"][0]["keywords"]
+
+
+def test_offline_fallback_detail_page_is_not_previewable_resource():
+    result = portal.build_offline_fallback_dataset_search("서울 집값", "DATA_PORTAL_TIMEOUT")
+    assert result.items
+    detail = portal.normalize_dataset_detail(result.items[0])
+    assert detail.resources
+    resource = detail.resources[0]
+    assert resource["url"].endswith("fileData.do")
+    assert resource["is_downloadable"] is False
+    assert resource["is_previewable"] is False
+    assert resource["is_visualizable"] is False
+    assert resource["reason_code"] == "RESOURCE_UNSUPPORTED_PORTAL_PAGE"

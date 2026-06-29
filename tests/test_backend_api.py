@@ -181,19 +181,20 @@ def test_data_portal_diagnostics_network_failure_returns_safe_json(monkeypatch):
     assert "network secret stack trace" not in str(body)
 
 
-def test_dataset_search_network_failure_returns_safe_error(monkeypatch):
+def test_dataset_search_network_failure_returns_offline_fallback(monkeypatch):
     def fail_urlopen(*args, **kwargs):
         raise OSError("network blocked")
 
     monkeypatch.setattr("backend.public_data_portal.urlopen", fail_urlopen)
 
-    response = client.post("/api/datasets/search", json={"keyword": "서울 빈집"})
+    response = client.post("/api/datasets/search", json={"keyword": "서울 집값"})
 
-    assert response.status_code == 503
-    body = response.json()["detail"]
-    assert body["status"] == "error"
-    assert body["items"] == []
-    assert "data.go.kr" in body["message"]
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "success"
+    assert body["items"]
+    assert body["source"] == "offline_fallback"
+    assert body["is_offline_fallback"] is True
     assert body["reason_code"] == "DATA_PORTAL_NETWORK_ERROR"
     assert "network blocked" not in str(body)
     assert "secret" not in str(body).lower()
