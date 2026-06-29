@@ -18,7 +18,12 @@
     const tokens = compact.split(" ").map((token) => token.trim()).filter(Boolean);
     const meaningful = tokens.filter((token) => token.length > 1 && !STOP_WORDS.has(token));
     const selected = (meaningful.length ? meaningful : tokens).slice(0, 5);
-    return selected.join(" ") || compact.slice(0, 40).trim();
+    const base = selected.join(" ") || compact.slice(0, 40).trim();
+    if (/(^|\s)집값($|\s)/.test(compact) || compact.includes("집값")) {
+      const additions = ["부동산", "실거래가", "아파트", "전월세", "주택 가격"].filter((term) => !base.includes(term));
+      return `${base} ${additions.slice(0, 2).join(" ")}`.trim();
+    }
+    return base;
   }
 
   function getKeywordText(keywordResult, fallbackKeyword, prompt) {
@@ -79,12 +84,18 @@
   function getResourceSupportState(resource) {
     const item = resource && typeof resource === "object" ? resource : {};
     const format = String(item.format || "").toUpperCase();
-    const url = String(item.url || "").toLowerCase().split("?")[0];
-    const supported = Boolean(item.url) && (item.is_previewable || format.includes("CSV") || format.includes("TSV") || format.includes("JSON") || url.endsWith(".csv") || url.endsWith(".tsv") || url.endsWith(".json"));
+    const urlText = String(item.url || "");
+    const url = urlText.toLowerCase().split("?")[0];
+    const isPortalPage = /https?:\/\/(www\.)?data\.go\.kr\//i.test(urlText) && (/\/(data|catalog|tcs\/dss|ugs|bbs|cmm)\//i.test(urlText) || url.endsWith(".do"));
+    const explicitlyBlocked = item.is_previewable === false || item.is_visualizable === false || Boolean(item.unsupported_reason) || Boolean(item.reason_code);
+    const inferredSupported = Boolean(item.url) && !isPortalPage && (format.includes("CSV") || format.includes("TSV") || format.includes("JSON") || url.endsWith(".csv") || url.endsWith(".tsv") || url.endsWith(".json"));
+    const previewable = item.is_previewable === true || (!explicitlyBlocked && inferredSupported);
+    const visualizable = item.is_visualizable === true || (!explicitlyBlocked && inferredSupported);
     return {
-      isPreviewable: Boolean(item.is_previewable || supported),
-      isVisualizable: Boolean(item.is_visualizable || supported),
-      unsupportedReason: item.unsupported_reason || (supported ? "" : "CSV/TSV/JSON 리소스만 자동 지원합니다."),
+      isPreviewable: Boolean(previewable),
+      isVisualizable: Boolean(visualizable),
+      unsupportedReason: item.unsupported_reason || (isPortalPage ? "공공데이터포털 상세/목록 페이지는 직접 미리보기할 수 없습니다. 실제 파일/API 리소스를 선택하세요." : (inferredSupported ? "" : "CSV/TSV/JSON 리소스만 자동 지원합니다.")),
+      reasonCode: item.reason_code || (isPortalPage ? "RESOURCE_UNSUPPORTED_PORTAL_PAGE" : ""),
     };
   }
 
