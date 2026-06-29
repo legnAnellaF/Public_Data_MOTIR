@@ -823,3 +823,89 @@ def test_visualize_large_upload_returns_json_413():
     body = response.json()["detail"]
     assert body["reason_code"] == "UPLOAD_TOO_LARGE"
     assert "파일이 너무 큽니다" in body["message"]
+
+
+def test_keywords_openai_mock_response_normalized(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+
+    class MockResponse:
+        output_text = '{"keywords":["서울","집값","부동산","실거래가"],"expanded_query":"서울 집값 부동산 실거래가","intent":"public_data_search","domain":"real_estate","region":"서울","confidence":0.86,"fallback_reason":""}'
+
+    class MockResponses:
+        def create(self, **kwargs):
+            assert kwargs["model"]
+            assert "서울 집값 시각화" in kwargs["input"]
+            return MockResponse()
+
+    class MockOpenAI:
+        def __init__(self, api_key):
+            assert api_key == "test-openai-key"
+            self.responses = MockResponses()
+
+    import backend.keyword_extractor as keyword_extractor
+
+    monkeypatch.setattr(keyword_extractor, "OpenAI", MockOpenAI, raising=False)
+    monkeypatch.setitem(__import__("sys").modules, "openai", type("MockOpenAIModule", (), {"OpenAI": MockOpenAI}))
+
+    response = client.post("/api/keywords", json={"prompt": "서울 집값 시각화"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["source"] == "openai"
+    assert body["is_fallback"] is False
+    assert body["expanded_query"] == "서울 집값 부동산 실거래가"
+    assert {"서울", "집값", "부동산", "실거래가"}.issubset(set(body["keywords"]))
+    assert body["domain"] == "real_estate"
+    assert body["region"] == "서울"
+
+
+def test_keywords_openai_exception_falls_back_without_breaking_flow(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+
+    class MockResponses:
+        def create(self, **kwargs):
+            raise RuntimeError("upstream unavailable")
+
+    class MockOpenAI:
+        def __init__(self, api_key):
+            self.responses = MockResponses()
+
+    monkeypatch.setitem(__import__("sys").modules, "openai", type("MockOpenAIModule", (), {"OpenAI": MockOpenAI}))
+
+    response = client.post("/api/keywords", json={"prompt": "서울 집값 시각화"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["source"] == "fallback"
+    assert body["is_fallback"] is True
+    assert "OPENAI_KEYWORD_API_FAILED" in body["reason_codes"]
+    assert {"서울", "집값", "부동산", "실거래가"}.issubset(set(body["keywords"]))
+    assert body["fallback_reason"]
+
+
+def test_keywords_openai_invalid_schema_falls_back(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+
+    class MockResponse:
+        output_text = '{"keywords": [], "expanded_query": ""}'
+
+    class MockResponses:
+        def create(self, **kwargs):
+            return MockResponse()
+
+    class MockOpenAI:
+        def __init__(self, api_key):
+            self.responses = MockResponses()
+
+    monkeypatch.setitem(__import__("sys").modules, "openai", type("MockOpenAIModule", (), {"OpenAI": MockOpenAI}))
+
+    response = client.post("/api/keywords", json={"prompt": "서울 집값 시각화"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["source"] == "fallback"
+    assert "OPENAI_KEYWORD_SCHEMA_INVALID" in body["reason_codes"]
+    assert "sk-" not in str(body)
