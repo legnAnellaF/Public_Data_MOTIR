@@ -186,7 +186,10 @@
       throw new Error(message);
     }
 
-    updateRequest(historyEntry, { status: "success", elapsed_ms: Date.now() - startedAtMs, http_status: response.status, message: "성공" });
+    const successMessage = payload && (payload.is_offline_fallback || payload.source === "offline_fallback")
+      ? (payload.message || "offline fallback candidates")
+      : "성공";
+    updateRequest(historyEntry, { status: "success", elapsed_ms: Date.now() - startedAtMs, http_status: response.status, message: successMessage });
     return payload;
   }
 

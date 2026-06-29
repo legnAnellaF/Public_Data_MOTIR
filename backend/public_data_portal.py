@@ -95,13 +95,21 @@ class DatasetSearchResult:
     items: list[dict[str, Any]]
     message: str = ""
     reason_code: str | None = None
+    source: str = "data_go_kr_live"
+    is_offline_fallback: bool = False
 
     def to_dict(self) -> dict[str, Any]:
+        first = self.items[0] if self.items else None
         payload = {
             "status": self.status,
             "query": self.query,
             "items": self.items,
             "message": self.message,
+            "source": self.source,
+            "is_offline_fallback": self.is_offline_fallback,
+            "portal": "data.go.kr",
+            "candidate_count": len(self.items),
+            "first_candidate": {key: first.get(key) for key in ("title", "provider", "format", "url")} if isinstance(first, dict) else None,
         }
         if self.reason_code:
             payload["reason_code"] = self.reason_code
@@ -223,6 +231,106 @@ def normalize_dataset_search_response(payload: Any, query: str) -> DatasetSearch
     items = [normalized for raw in _extract_items(payload) if (normalized := normalize_dataset_item(raw))]
     return DatasetSearchResult(status="success", query=query, items=items, message="")
 
+
+_OFFLINE_FALLBACK_SEARCH_TOPICS: tuple[dict[str, Any], ...] = (
+    {
+        "title": "서울특별시 부동산 실거래가 정보",
+        "description": "서울 지역 부동산 매매 실거래가 확인을 위한 데모-safe data.go.kr 후보입니다. 포털 상세 페이지에서 실제 파일/API 리소스를 확인하세요.",
+        "provider": "서울특별시",
+        "category": "지역개발 - 부동산",
+        "url": "https://www.data.go.kr/data/15052419/fileData.do",
+        "keywords": ("서울", "집값", "부동산", "실거래가", "아파트", "매매"),
+        "score": 96,
+        "match_reasons": ("offline_fallback", "topic:부동산,실거래가"),
+    },
+    {
+        "title": "국토교통부 실거래가 정보",
+        "description": "전국 주택/아파트 실거래가 흐름을 확인하는 데모 후보입니다. live 검색 장애 시 후보 선택 흐름을 유지하기 위한 항목입니다.",
+        "provider": "국토교통부",
+        "category": "지역개발 - 부동산",
+        "url": "https://www.data.go.kr/data/15057511/fileData.do",
+        "keywords": ("집값", "부동산", "실거래가", "아파트", "주택"),
+        "score": 92,
+        "match_reasons": ("offline_fallback", "topic:부동산,실거래가"),
+    },
+    {
+        "title": "서울특별시 전월세 실거래가 정보",
+        "description": "서울 전월세 실거래가 확인을 위한 데모 후보입니다. 직접 preview 가능한 리소스가 아니라 상세 확인 단계로 연결됩니다.",
+        "provider": "서울특별시",
+        "category": "지역개발 - 부동산",
+        "url": "https://www.data.go.kr/data/15052420/fileData.do",
+        "keywords": ("서울", "전월세", "부동산", "실거래가", "임대차"),
+        "score": 88,
+        "match_reasons": ("offline_fallback", "topic:전월세,실거래가"),
+    },
+    {
+        "title": "한국부동산원 공동주택 가격지수",
+        "description": "공동주택 가격지수 분석 흐름을 시연하기 위한 데모 후보입니다.",
+        "provider": "한국부동산원",
+        "category": "지역개발 - 부동산",
+        "url": "https://www.data.go.kr/data/15057936/fileData.do",
+        "keywords": ("집값", "부동산", "공동주택", "가격지수", "아파트"),
+        "score": 82,
+        "match_reasons": ("offline_fallback", "topic:부동산,가격지수"),
+    },
+    {
+        "title": "전국개별주택가격정보표준데이터",
+        "description": "개별주택가격 표준데이터 확인 흐름을 위한 데모 후보입니다.",
+        "provider": "행정안전부",
+        "category": "지역개발 - 부동산",
+        "url": "https://www.data.go.kr/data/15004407/standard.do",
+        "keywords": ("주택", "가격", "부동산", "표준데이터", "공시가격"),
+        "score": 78,
+        "match_reasons": ("offline_fallback", "topic:주택가격,표준데이터"),
+    },
+    {
+        "title": "서울특별시 대기환경정보",
+        "description": "서울 미세먼지/대기환경 시연용 데모 후보입니다.",
+        "provider": "서울특별시",
+        "category": "환경 - 대기",
+        "url": "https://www.data.go.kr/data/15089266/fileData.do",
+        "keywords": ("서울", "미세먼지", "대기", "환경"),
+        "score": 74,
+        "match_reasons": ("offline_fallback", "topic:미세먼지,대기환경"),
+    },
+)
+
+
+def build_offline_fallback_dataset_search(keyword: str, reason_code: str, per_page: int = 10) -> DatasetSearchResult:
+    """Return deterministic demo-safe search candidates for transient portal failures."""
+    query = expand_public_data_keyword(keyword)
+    query_tokens = set(re.findall(r"[0-9A-Za-z가-힣]+", query))
+    ranked: list[dict[str, Any]] = []
+    for index, template in enumerate(_OFFLINE_FALLBACK_SEARCH_TOPICS):
+        item_keywords = set(template["keywords"])
+        overlap = len(query_tokens & item_keywords)
+        score = int(template["score"]) + overlap * 20 - index
+        ranked.append({
+            "id": None,
+            "title": template["title"],
+            "description": template["description"],
+            "provider": template["provider"],
+            "category": template["category"],
+            "format": "FILE",
+            "updated_at": None,
+            "url": template["url"],
+            "detail_url": template["url"],
+            "data_type": "FILE",
+            "keywords": list(template["keywords"]),
+            "score": score,
+            "match_reasons": list(template["match_reasons"]),
+            "is_offline_fallback": True,
+        })
+    ranked.sort(key=lambda item: item["score"], reverse=True)
+    return DatasetSearchResult(
+        status="success",
+        query=query,
+        items=ranked[: max(1, per_page)],
+        message="data.go.kr live 검색이 불안정해 데모 후보로 계속 진행합니다.",
+        reason_code=reason_code,
+        source="offline_fallback",
+        is_offline_fallback=True,
+    )
 
 
 class _DataGoKrHTMLParser(HTMLParser):
@@ -915,6 +1023,8 @@ def fetch_dataset_search(keyword: str, page: int = 1, per_page: int = 10) -> Dat
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         reason_code, http_status = _classify_portal_exception(exc)
         logger.warning("data.go.kr search failed url=%s reason=%s http_status=%s elapsed_ms=%s", safe_url, reason_code, http_status, elapsed_ms)
+        if reason_code in {"DATA_PORTAL_TIMEOUT", "DATA_PORTAL_NETWORK_ERROR"}:
+            return build_offline_fallback_dataset_search(keyword, reason_code, per_page=per_page)
         return DatasetSearchResult(status="error", query=keyword, items=[], message="data.go.kr 검색 페이지 호출에 실패했습니다. 네트워크, 프록시 또는 포털 접근 상태를 확인해 주세요.", reason_code=reason_code)
     result = parse_data_go_kr_search_html(html, keyword)
     elapsed_ms = int((time.perf_counter() - started) * 1000)

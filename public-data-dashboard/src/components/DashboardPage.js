@@ -576,6 +576,20 @@
         return resultBox;
       }
 
+      if (datasetSearchResult.is_offline_fallback || datasetSearchResult.source === "offline_fallback") {
+        const fallbackNotice = document.createElement("div");
+        fallbackNotice.className = "dataset-fallback-notice";
+        fallbackNotice.setAttribute("role", "status");
+        fallbackNotice.textContent = datasetSearchResult.message || "data.go.kr live 검색이 일시적으로 불안정해 데모 후보로 계속 진행합니다. 실제 포털 연결이 복구되면 live 후보가 표시됩니다.";
+        if (datasetSearchResult.reason_code) {
+          const reason = document.createElement("span");
+          reason.className = "dataset-fallback-reason";
+          reason.textContent = ` (${datasetSearchResult.reason_code})`;
+          fallbackNotice.appendChild(reason);
+        }
+        resultBox.appendChild(fallbackNotice);
+      }
+
       const list = document.createElement("div");
       list.className = "dataset-candidate-list";
       items.forEach((item) => list.appendChild(createDatasetCandidateCard(item)));

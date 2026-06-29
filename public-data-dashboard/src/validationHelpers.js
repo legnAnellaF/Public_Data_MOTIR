@@ -48,7 +48,9 @@
     items.push(keywordSummary(s));
 
     const candidates = s.datasetSearchResult && Array.isArray(s.datasetSearchResult.items) ? s.datasetSearchResult.items : [];
-    items.push(statusItem("dataset search", s.isDatasetSearchLoading ? "loading" : s.datasetSearchError ? "error" : s.datasetSearchResult ? "success" : "idle", s.isDatasetSearchLoading ? "loading" : s.datasetSearchError || `candidate count: ${candidates.length}${candidates[0] ? ` · 첫 후보: ${candidates[0].title || "제목 없음"}` : ""}`));
+    const isFallbackSearch = !!(s.datasetSearchResult && (s.datasetSearchResult.is_offline_fallback || s.datasetSearchResult.source === "offline_fallback"));
+    const fallbackSuffix = isFallbackSearch ? ` · offline fallback candidates${s.datasetSearchResult.reason_code ? ` (${s.datasetSearchResult.reason_code})` : ""}` : "";
+    items.push(statusItem("dataset search", s.isDatasetSearchLoading ? "loading" : s.datasetSearchError ? "error" : s.datasetSearchResult ? "success" : "idle", s.isDatasetSearchLoading ? "loading" : s.datasetSearchError || `candidate count: ${candidates.length}${fallbackSuffix}${candidates[0] ? ` · 첫 후보: ${candidates[0].title || "제목 없음"}` : ""}`));
     items.push(statusItem("selected dataset", s.selectedDataset ? "success" : "idle", s.selectedDataset ? `${s.selectedDataset.title || "제목 없음"} · ${s.selectedDataset.provider || "provider 미상"} · ${s.selectedDataset.format || "format 미상"}` : "not selected"));
     const resources = s.datasetDetailResult && Array.isArray(s.datasetDetailResult.resources) ? s.datasetDetailResult.resources : [];
     items.push(statusItem("dataset detail", s.isDatasetDetailLoading ? "loading" : s.datasetDetailError ? "error" : s.datasetDetailResult ? "success" : "idle", s.datasetDetailError || `resource count: ${resources.length}`));
