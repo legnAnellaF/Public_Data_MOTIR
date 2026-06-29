@@ -91,8 +91,8 @@
     const rightColumn = document.createElement("div");
     rightColumn.className = "dashboard-column right-column";
 
-    leftColumn.append(createApiConnectionPanel(), createDemoModePanel(), createValidationStatusPanel(), createOutlinePanel(mainPrompt), createAdditionalPromptPanel());
-    rightColumn.append(createDatasetSearchPanel(), createVisualizationPanel(), createReportPanel(), createCommentPanel(mainPrompt));
+    leftColumn.append(createOutlinePanel(mainPrompt), createAdditionalPromptPanel());
+    rightColumn.append(createDatasetSearchPanel(), createInsightPanel(mainPrompt));
     layout.append(leftColumn, rightColumn);
     page.append(header, layout);
 
@@ -590,6 +590,11 @@
         resultBox.appendChild(fallbackNotice);
       }
 
+      const countNotice = document.createElement("p");
+      countNotice.className = "dataset-candidate-count";
+      countNotice.textContent = `${items.length}개 후보를 찾았습니다. 아래 후보를 선택하세요.`;
+      resultBox.appendChild(countNotice);
+
       const list = document.createElement("div");
       list.className = "dataset-candidate-list";
       items.forEach((item) => list.appendChild(createDatasetCandidateCard(item)));
@@ -963,7 +968,7 @@
       return left.title === right.title && left.url === right.url;
     }
 
-    function createVisualizationPanel() {
+    function createVisualizationContent() {
       const wrapper = document.createElement("div");
       wrapper.className = "visualization-workspace";
 
@@ -1012,9 +1017,13 @@
       uploadBox.append(uploadCopy, fileLabel, fileInput, selectedFileText, runButton);
       wrapper.append(uploadBox, createVisualizationResultBlock());
 
+      return wrapper;
+    }
+
+    function createVisualizationPanel() {
       return window.PublicDataDashboard.Panel({
         title: createVisualizationTitle(mainPrompt, additionalPrompts),
-        children: wrapper,
+        children: createVisualizationContent(),
         className: "visual-panel",
       });
     }
@@ -1349,7 +1358,7 @@
     }
 
 
-    function createReportPanel() {
+    function createReportContent() {
       const helper = window.PublicDataDashboard.AnalysisHelpers;
       const context = getAnalysisContext();
       const markdown = helper && helper.buildReportSummaryMarkdown ? helper.buildReportSummaryMarkdown(context) : "리포트 요약을 생성할 수 없습니다.";
@@ -1370,7 +1379,11 @@
         createReportActionButton("JSON 다운로드", () => downloadText("public-data-report-summary.json", JSON.stringify(jsonSummary, null, 2), "application/json"))
       );
       wrapper.append(badge, actions, pre);
-      return window.PublicDataDashboard.Panel({ title: "분석 리포트 요약", children: wrapper, className: "report-panel-shell" });
+      return wrapper;
+    }
+
+    function createReportPanel() {
+      return window.PublicDataDashboard.Panel({ title: "분석 리포트 요약", children: createReportContent(), className: "report-panel-shell" });
     }
 
     function createReportActionButton(label, handler) {
@@ -1398,7 +1411,7 @@
       URL.revokeObjectURL(url);
     }
 
-    function createCommentPanel(prompt) {
+    function createCommentContent(prompt) {
       const wrapper = document.createElement("div");
       wrapper.className = "comment-thread";
 
@@ -1419,10 +1432,38 @@
       keywordBubble.textContent = getKeywordMessage();
       wrapper.appendChild(keywordBubble);
 
+      return wrapper;
+    }
+
+    function createCommentPanel(prompt) {
       return window.PublicDataDashboard.Panel({
         title: "데이터 코멘트",
-        children: wrapper,
+        children: createCommentContent(prompt),
       });
+    }
+
+    function createInsightPanel(prompt) {
+      const wrapper = document.createElement("div");
+      wrapper.className = "insight-panel-stack";
+      wrapper.append(
+        createInsightSection("분석 리포트 요약", createReportContent(), "insight-report-section"),
+        createInsightSection("시각화 결과", createVisualizationContent(), "insight-visualization-section"),
+        createInsightSection("데이터 코멘트", createCommentContent(prompt), "insight-comment-section")
+      );
+      return window.PublicDataDashboard.Panel({
+        title: "데이터 코멘트 / 리포트 / 시각화",
+        children: wrapper,
+        className: "insight-panel-shell",
+      });
+    }
+
+    function createInsightSection(titleText, content, className) {
+      const section = document.createElement("section");
+      section.className = `insight-section ${className || ""}`.trim();
+      const title = document.createElement("h3");
+      title.textContent = titleText;
+      section.append(title, content);
+      return section;
     }
 
     function getEffectiveKeyword() {
