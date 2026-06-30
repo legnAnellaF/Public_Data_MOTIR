@@ -909,3 +909,65 @@ def test_keywords_openai_invalid_schema_falls_back(monkeypatch):
     assert body["source"] == "fallback"
     assert "OPENAI_KEYWORD_SCHEMA_INVALID" in body["reason_codes"]
     assert "sk-" not in str(body)
+
+
+def test_resource_preview_xml_success_with_mocked_client(monkeypatch):
+    from backend import public_data_portal as portal
+
+    class FakeResponse:
+        headers = {"Content-Type": "application/xml"}
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def geturl(self):
+            return "https://example.test/data.xml"
+        def read(self, n=-1):
+            return b"<root><item><name>Seoul</name><value>1</value></item><item><name>Busan</name><value>2</value></item></root>"
+
+    monkeypatch.setattr(portal, "urlopen", lambda *args, **kwargs: FakeResponse())
+    response = client.post("/api/datasets/resource/preview", json={"resource": {"name": "XML", "format": "XML", "url": "https://example.test/data.xml"}, "max_rows": 10})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["preview"]["kind"] == "table"
+    assert body["preview"]["headers"] == ["name", "value"]
+    assert body["preview"]["rows"][0] == ["Seoul", "1"]
+
+
+def test_resource_preview_html_content_type_returns_graceful_reason(monkeypatch):
+    from backend import public_data_portal as portal
+
+    class FakeResponse:
+        headers = {"Content-Type": "text/html; charset=utf-8"}
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def geturl(self):
+            return "https://example.test/download?id=1"
+        def read(self, n=-1):
+            return b"<html>not a file</html>"
+
+    monkeypatch.setattr(portal, "urlopen", lambda *args, **kwargs: FakeResponse())
+    response = client.post("/api/datasets/resource/preview", json={"resource": {"name": "HTML", "format": "CSV", "url": "https://example.test/download?id=1"}})
+    assert response.status_code == 502
+    assert response.json()["detail"]["reason_code"] == "RESOURCE_CONTENT_TYPE_UNSUPPORTED"
+
+
+def test_detail_extracts_xml_and_attr_url_candidates():
+    from backend.public_data_portal import parse_data_go_kr_detail_html
+
+    html = '''
+    <html><body>
+      <h1>테스트 파일데이터</h1>
+      <button download-url="/download/data.xml?atchFileId=1">XML 다운로드</button>
+      <a href="/download/file?name=sample.csv">CSV 파일 다운로드</a>
+      <a href="https://www.data.go.kr/data/1/fileData.do">상세 페이지</a>
+    </body></html>
+    '''
+    result = parse_data_go_kr_detail_html(html, "https://www.data.go.kr/data/1/fileData.do")
+    urls = [r["url"] for r in result.resources]
+    assert any("data.xml" in url for url in urls)
+    assert any("sample.csv" in url for url in urls)
+    assert not any(url.endswith("fileData.do") for url in urls)
+    assert any(r["format"] == "XML" and r["is_previewable"] is True for r in result.resources)

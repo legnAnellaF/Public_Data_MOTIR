@@ -741,7 +741,7 @@
           hint.className = "resource-preview-hint";
           hint.textContent = isOpenApiCandidate(item)
             ? "OpenAPI/연계 API 후보입니다. backend에서 serviceKey 및 endpoint 유효성을 확인한 뒤 일부 행을 가져옵니다. frontend에는 serviceKey를 입력하지 않습니다."
-            : "원격 미리보기/자동 분석은 CSV/TSV/JSON만 지원합니다. API key/serviceKey가 필요한 resource와 원격 Excel은 제한되며 Excel은 직접 파일 업로드를 사용하세요.";
+            : "원격 미리보기는 CSV/TSV/JSON/XML의 안전한 직접 리소스만 지원합니다. 포털 상세 페이지/활용신청/외부 링크 방식은 자동 preview가 제한되며, CSV/XLS/XLSX 파일을 직접 내려받아 업로드하면 동일한 시각화와 리포트를 사용할 수 있습니다.";
           card.appendChild(hint);
         }
 
@@ -782,12 +782,12 @@
       }
 
       if (resourcePreviewError) {
-        block.appendChild(createDatasetStatus("error", `리소스 미리보기 실패: ${resourcePreviewError}`));
+        block.appendChild(createDatasetStatus("warning", `자동 미리보기 제한: ${resourcePreviewError} CSV/XLS/XLSX 파일을 직접 내려받아 업로드하면 동일한 시각화와 리포트 생성을 사용할 수 있습니다.`));
         return block;
       }
 
       if (!resourcePreviewResult || (!resourcePreviewResult.preview && !(Array.isArray(resourcePreviewResult.columns) && Array.isArray(resourcePreviewResult.rows)))) {
-        block.appendChild(createDatasetStatus("empty", "리소스 후보의 미리보기 버튼을 누르면 CSV/TSV/JSON 또는 OpenAPI 일부가 여기에 표시됩니다."));
+        block.appendChild(createDatasetStatus("empty", "리소스 후보의 미리보기 버튼을 누르면 CSV/TSV/JSON/XML 또는 OpenAPI 일부가 여기에 표시됩니다."));
         return block;
       }
 
@@ -949,8 +949,8 @@
       const item = resource && typeof resource === "object" ? resource : {};
       const format = String(item.format || "").toUpperCase();
       const url = String(item.url || "").toLowerCase().split("?")[0];
-      const supported = Boolean(item.url) && (format.includes("CSV") || format.includes("TSV") || format.includes("JSON") || url.endsWith(".csv") || url.endsWith(".tsv") || url.endsWith(".json"));
-      return { isPreviewable: supported, isVisualizable: supported, unsupportedReason: supported ? "" : "CSV/TSV/JSON 리소스만 자동 지원합니다." };
+      const supported = Boolean(item.url) && (format.includes("CSV") || format.includes("TSV") || format.includes("JSON") || format.includes("XML") || url.endsWith(".csv") || url.endsWith(".tsv") || url.endsWith(".json") || url.endsWith(".xml"));
+      return { isPreviewable: supported, isVisualizable: supported, unsupportedReason: supported ? "" : "CSV/TSV/JSON/XML 리소스만 자동 미리보기를 지원합니다." };
     }
 
     function isPreviewableResource(resource) {
