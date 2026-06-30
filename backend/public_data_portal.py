@@ -40,6 +40,7 @@ RESOURCE_PREVIEW_MAX_BYTES = 256 * 1024
 RESOURCE_PREVIEW_TIMEOUT_SECONDS = 8
 RESOURCE_PREVIEW_DEFAULT_ROWS = 10
 RESOURCE_PREVIEW_MAX_ROWS = 20
+_HTML_CONTENT_TYPE_RE = re.compile(r"(?:text/html|application/xhtml\+xml)", re.IGNORECASE)
 _RESOURCE_PREVIEW_SAFE_FIELDS = ("name", "format", "url", "description", "is_downloadable", "is_api", "is_previewable", "is_visualizable", "unsupported_reason", "source_hint")
 _SENSITIVE_QUERY_KEYS = {"key", "apikey", "api_key", "servicekey", "service_key", "token", "secret", "password"}
 
@@ -571,7 +572,7 @@ def parse_data_go_kr_search_html(html: str, query: str) -> DatasetSearchResult:
     return DatasetSearchResult(status="success", query=query, items=candidates, message="" if candidates else "검색 결과가 없거나 data.go.kr HTML 구조를 해석하지 못했습니다.")
 
 
-_RESOURCE_HINT_TOKENS = ("download", "file", "csv", "json", "excel", "xls", "api", "get", "openapi", "파일", "다운로드", "미리보기")
+_RESOURCE_HINT_TOKENS = ("download", "file", "atchfile", "csv", "json", "xml", "excel", "xls", "api", "url", "get", "openapi", "파일", "다운로드", "미리보기")
 _STATIC_EXTENSIONS = (".css", ".js", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".woff", ".woff2")
 
 def _extract_urls_from_text(text: str, base_url: str = DATA_GO_KR_ORIGIN) -> list[str]:
@@ -600,8 +601,8 @@ def _resource_support(fmt: str, is_api: bool, url: str, context: str = "") -> di
     if is_data_go_kr_portal_page_url(url):
         return {"is_previewable": False, "is_visualizable": False, "unsupported_reason": "공공데이터포털 상세/목록 페이지 URL은 직접 데이터 리소스가 아닙니다. 상세 페이지에서 실제 파일/API 리소스를 선택해 주세요.", "reason_code": _PORTAL_PAGE_REASON_CODE, "requires_api_key": False}
     requires_key = bool(re.search(r"servicekey|apikey|api_key|인증키|활용신청", f"{url} {context}", re.IGNORECASE))
-    is_openapi = is_api or upper in {"API", "XML"} or "openapi" in f"{url} {context}".lower()
-    previewable = upper in {"CSV", "TSV", "JSON"} and not requires_key and not is_openapi
+    is_openapi = is_api or upper == "API" or "openapi" in f"{url} {context}".lower()
+    previewable = upper in {"CSV", "TSV", "JSON", "XML"} and not requires_key and not is_openapi
     visualizable = previewable
     reason = ""
     if is_openapi:
@@ -610,6 +611,10 @@ def _resource_support(fmt: str, is_api: bool, url: str, context: str = "") -> di
         reason = "API key가 필요한 리소스일 수 있어 자동 미리보기/시각화가 제한됩니다. 상세 페이지에서 확인하세요."
     elif upper in {"XLS", "XLSX"}:
         reason = "원격 Excel은 자동 분석하지 않으며 내려받은 뒤 직접 업로드하세요."
+    elif upper == "XML":
+        reason = "XML은 단순 반복 구조만 자동 미리보기를 시도하며 시각화는 직접 업로드를 권장합니다."
+        previewable = not requires_key and not is_openapi
+        visualizable = False
     elif upper not in {"CSV", "TSV", "JSON"}:
         reason = "CSV/TSV/JSON 리소스만 자동 미리보기/시각화를 지원합니다."
     return {"is_previewable": previewable, "is_visualizable": visualizable, "unsupported_reason": reason, "reason_code": "" if previewable else ("OPENAPI_BACKEND_REQUIRED" if is_openapi else ("RESOURCE_UNSUPPORTED_FORMAT" if reason else "")), "requires_api_key": requires_key, "is_openapi": is_openapi}
@@ -659,7 +664,8 @@ def parse_data_go_kr_detail_html(html: str, detail_url: str = "") -> DatasetDeta
         if href and not href.lower().startswith("javascript:"):
             urls.append((urljoin(detail_url or DATA_GO_KR_ORIGIN, href), "href"))
         for key, value in attrs.items():
-            if key.startswith("data-") or key in {"onclick", "value"}:
+            key_l = str(key).lower()
+            if key_l.startswith("data-") or any(token in key_l for token in ("url", "href", "download", "file", "atch", "api", "onclick", "value")):
                 for extracted in _extract_urls_from_text(str(value), detail_url or DATA_GO_KR_ORIGIN):
                     urls.append((extracted, key))
         if not any(token in context.lower() for token in _RESOURCE_HINT_TOKENS):
@@ -806,15 +812,20 @@ def _infer_resource_format(resource: dict[str, Any]) -> str:
     if explicit:
         return explicit.upper()
 
-    text_blob = " ".join(_clean_string(_first_value(resource, keys)) for keys in (("name", "title", "resourceName", "fileName", "apiName", "서비스명", "파일명"), ("description", "desc", "summary", "contents", "설명"), ("linkText", "text", "titleText")))
-    for label in ("CSV", "TSV", "JSON", "XLSX", "XLS", "XML"):
-        if re.search(rf"(?<![A-Z0-9]){label}(?![A-Z0-9])", text_blob.upper()):
-            return label
-
     url = _clean_string(_first_value(resource, ("url", "downloadUrl", "apiUrl", "endpoint", "link", "다운로드URL", "APIURL")))
     lowered = url.lower().split("?")[0]
     for suffix, label in ((".csv", "CSV"), (".xlsx", "XLSX"), (".xls", "XLS"), (".json", "JSON"), (".xml", "XML")):
         if lowered.endswith(suffix):
+            return label
+
+    query = urlsplit(url).query.lower()
+    for suffix, label in ((".csv", "CSV"), (".xlsx", "XLSX"), (".xls", "XLS"), (".json", "JSON"), (".xml", "XML")):
+        if suffix in query:
+            return label
+
+    text_blob = " ".join(_clean_string(_first_value(resource, keys)) for keys in (("name", "title", "resourceName", "fileName", "apiName", "서비스명", "파일명"), ("description", "desc", "summary", "contents", "설명"), ("linkText", "text", "titleText")))
+    for label in ("CSV", "TSV", "JSON", "XLSX", "XLS", "XML"):
+        if re.search(rf"(?<![A-Z0-9]){label}(?![A-Z0-9])", text_blob.upper()):
             return label
     return "API" if "api" in lowered else "unknown"
 
@@ -1105,12 +1116,16 @@ def validate_resource_url(resource: dict[str, Any]) -> str:
 def infer_resource_format(resource: dict[str, Any], content_type: str = "") -> str:
     """Infer preview format from declared metadata, content-type, and URL extension."""
     declared = _infer_resource_format(resource).upper()
-    if declared in {"CSV", "TSV", "JSON", "XLS", "XLSX"}:
+    if declared in {"CSV", "TSV", "JSON", "XML", "XLS", "XLSX"}:
         return declared
 
     lowered_type = content_type.lower()
+    if _HTML_CONTENT_TYPE_RE.search(lowered_type):
+        return "HTML"
     if "json" in lowered_type:
         return "JSON"
+    if "xml" in lowered_type:
+        return "XML"
     if "tab-separated" in lowered_type or "tsv" in lowered_type:
         return "TSV"
     if "csv" in lowered_type or "text/plain" in lowered_type:
@@ -1120,6 +1135,8 @@ def infer_resource_format(resource: dict[str, Any], content_type: str = "") -> s
     path = urlsplit(url).path.lower()
     if path.endswith(".json"):
         return "JSON"
+    if path.endswith(".xml"):
+        return "XML"
     if path.endswith(".tsv"):
         return "TSV"
     if path.endswith(".csv"):
@@ -1204,9 +1221,31 @@ def normalize_resource_preview(resource: dict[str, Any], raw_bytes: bytes, fmt: 
             raise ValueError("RESOURCE_JSON_NOT_TABULAR: JSON에서 표시 가능한 열을 찾지 못했습니다.")
         return {"kind": "table", "headers": headers, "rows": [[str(row.get(key, "")) for key in headers] for row in records[:row_limit]], "truncated": truncated or len(records) > row_limit, "message": f"JSON 객체 배열에서 처음 {min(len(records), row_limit)}행만 표시합니다."}
 
+    if fmt == "XML":
+        import xml.etree.ElementTree as ET
+        root = ET.fromstring(text)
+        groups: dict[str, list[Any]] = {}
+        for elem in root.iter():
+            children = list(elem)
+            if children and all(len(list(child)) == 0 for child in children):
+                row = {child.tag.split("}")[-1]: (child.text or "").strip() for child in children}
+                if row and any(row.values()):
+                    groups.setdefault(elem.tag.split("}")[-1], []).append(row)
+        records = max(groups.values(), key=len) if groups else []
+        if not records:
+            raise ValueError("RESOURCE_XML_NOT_TABULAR: XML에서 단순 반복 행을 찾지 못했습니다. 파일을 내려받아 직접 업로드해 주세요.")
+        headers: list[str] = []
+        for row in records:
+            for key in row:
+                if key not in headers:
+                    headers.append(key)
+        return {"kind": "table", "headers": headers, "rows": [[str(row.get(key, "")) for key in headers] for row in records[:row_limit]], "truncated": truncated or len(records) > row_limit, "message": f"XML 단순 반복 구조에서 처음 {min(len(records), row_limit)}행만 표시합니다."}
+
     if fmt in {"XLS", "XLSX"}:
         raise ValueError("RESOURCE_UNSUPPORTED_FORMAT: 원격 Excel 파일은 이번 단계에서 직접 파싱하지 않습니다. 파일을 내려받아 직접 업로드해 주세요.")
-    raise ValueError("RESOURCE_UNSUPPORTED_FORMAT: CSV/TSV/JSON 리소스만 미리보기를 지원합니다.")
+    if fmt == "HTML":
+        raise ValueError("RESOURCE_CONTENT_TYPE_UNSUPPORTED: HTML 페이지는 직접 데이터 리소스가 아닙니다. 파일을 내려받아 직접 업로드해 주세요.")
+    raise ValueError("RESOURCE_UNSUPPORTED_FORMAT: CSV/TSV/JSON/XML 리소스만 미리보기를 지원합니다.")
 
 def fetch_resource_preview(resource: dict[str, Any], max_bytes: int = RESOURCE_PREVIEW_MAX_BYTES, max_rows: int = RESOURCE_PREVIEW_DEFAULT_ROWS) -> ResourcePreviewResult:
     """Fetch a small bounded preview for a validated external CSV/TSV/JSON resource."""
@@ -1224,6 +1263,8 @@ def fetch_resource_preview(resource: dict[str, Any], max_bytes: int = RESOURCE_P
                 return ResourcePreviewResult(status="error", resource=safe_resource, preview=None, metadata={"reason_code": "RESOURCE_REDIRECT_BLOCKED", "source_url": sanitize_url_for_response(final_url)}, message=str(exc))
             content_type = response.headers.get("Content-Type", "") if getattr(response, "headers", None) else ""
             fmt = infer_resource_format({**source, "url": final_url}, content_type)
+            if _HTML_CONTENT_TYPE_RE.search(content_type):
+                return ResourcePreviewResult(status="error", resource=safe_resource, preview=None, metadata={"content_type": content_type, "source_url": sanitize_url_for_response(final_url), "reason_code": "RESOURCE_CONTENT_TYPE_UNSUPPORTED"}, message="HTML 페이지는 직접 데이터 리소스가 아닙니다. 파일을 내려받아 직접 업로드해 주세요.")
             raw_bytes, truncated = _read_limited_response(response, max_bytes)
     except ValueError:
         raise
