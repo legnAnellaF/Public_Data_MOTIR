@@ -88,6 +88,13 @@ class IntelligentVisualizerEngine:
         invalid_y = ["번호", "순번", "id", "순위", "no", "연번", "연도"]
         valid_numerical = [col for col in numerical if not any(inv in col.lower() for inv in invalid_y)]
         
+        # 수치형 데이터가 없을 경우 가상의 '건수' 컬럼 추가 (단순 목록/명단 시각화 지원)
+        if not valid_numerical and (len(categorical) > 0 or len(temporal) > 0):
+            count_col = "데이터 건수(개)"
+            df[count_col] = 1
+            valid_numerical.append(count_col)
+            numerical.append(count_col)
+        
         # 도메인 키워드 룰
         startup_y_keywords = {
             "상권": ["점포", "유동인구", "매장", "상가", "영업", "폐업", "밀도", "인구"],
@@ -151,14 +158,18 @@ class IntelligentVisualizerEngine:
 
         # 3. Fallback
         if not final_x:
-            if temporal: final_x = temporal[0]
+            if temporal and df[temporal[0]].nunique() >= 2:
+                final_x = temporal[0]
             elif valid_categorical:
                 for col in valid_categorical:
                     if 2 <= df[col].nunique() <= 100:
                         final_x = col
                         break
                 if not final_x: final_x = valid_categorical[0]
-            elif df.columns.size > 0: final_x = df.columns[0]
+            elif temporal:
+                final_x = temporal[0]
+            elif df.columns.size > 0:
+                final_x = df.columns[0]
 
         return final_x, final_y_list
 

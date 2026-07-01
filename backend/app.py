@@ -156,7 +156,7 @@ def _to_jsonable(value: Any) -> Any:
 
 
 RESOURCE_VISUALIZE_MAX_BYTES = 5 * 1024 * 1024
-RESOURCE_VISUALIZE_SUPPORTED_FORMATS = {"CSV", "TSV", "JSON"}
+RESOURCE_VISUALIZE_SUPPORTED_FORMATS = {"CSV", "TSV", "JSON", "XLS", "XLSX"}
 
 
 OPENAPI_DEFAULT_LIMIT = 100
@@ -334,7 +334,7 @@ def _visualize_temp_file(temp_path: str, query: str, core_keyword: str) -> dict[
     visualizer = IntelligentVisualizerEngine()
     result = visualizer.process(temp_path, query=query.strip(), core_keyword=core_keyword.strip())
     if not result:
-        raise _safe_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "업로드한 파일에서 시각화 가능한 데이터를 찾지 못했습니다.")
+        raise _safe_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "업로드한 데이터에 행(Row) 정보가 없거나, 분류/비교 기준으로 삼을 만한 유효한 항목을 찾지 못해 시각화할 수 없습니다.")
     return _to_jsonable(result)
 
 @app.get("/api/health")
@@ -488,12 +488,14 @@ def visualize_dataset_resource(request: DatasetResourceVisualizeRequest) -> dict
     temp_path: str | None = None
     try:
         raw_bytes, fmt, content_type, source_url, _ = _read_remote_resource_bytes(resource)
-        if fmt in {"XLS", "XLSX"}:
-            raise _safe_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "원격 Excel 자동 분석은 아직 지원하지 않으며 파일 업로드를 사용하세요.", reason_code="RESOURCE_UNSUPPORTED_FORMAT")
         if fmt not in RESOURCE_VISUALIZE_SUPPORTED_FORMATS:
-            raise _safe_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "CSV/TSV/JSON 리소스만 자동 시각화를 지원합니다.", reason_code="RESOURCE_UNSUPPORTED_FORMAT")
+            raise _safe_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "CSV/TSV/JSON/XLS/XLSX 리소스만 자동 시각화를 지원합니다.", reason_code="RESOURCE_UNSUPPORTED_FORMAT")
 
         suffix = ".tsv" if fmt == "TSV" else ".csv"
+        if fmt == "XLSX":
+            suffix = ".xlsx"
+        elif fmt == "XLS":
+            suffix = ".xls"
         data_bytes = raw_bytes
         if fmt == "TSV":
             text = _decode_public_data_bytes(raw_bytes)
