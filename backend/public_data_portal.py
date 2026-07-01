@@ -391,7 +391,7 @@ def _node_links(node: dict[str, Any]) -> list[dict[str, str]]:
     return links
 
 
-_CURRENT_DETAIL_PATH_RE = re.compile(r"^/data/\d+/(?:fileData|apiData|standardData|linkedData)\.do$", re.IGNORECASE)
+_CURRENT_DETAIL_PATH_RE = re.compile(r"^/data/\d+/(?:fileData|apiData|standardData|standard|linkedData)\.do$", re.IGNORECASE)
 _PORTAL_PAGE_REASON_CODE = "RESOURCE_UNSUPPORTED_PORTAL_PAGE"
 
 
