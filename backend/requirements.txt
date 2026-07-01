@@ -3,6 +3,7 @@ uvicorn
 python-multipart
 pandas
 openpyxl
+xlrd
 python-dotenv
 pydantic
 tenacity

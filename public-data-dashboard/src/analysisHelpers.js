@@ -88,13 +88,13 @@
     const url = urlText.toLowerCase().split("?")[0];
     const isPortalPage = /https?:\/\/(www\.)?data\.go\.kr\//i.test(urlText) && (/\/(data|catalog|tcs\/dss|ugs|bbs|cmm)\//i.test(urlText) || url.endsWith(".do"));
     const explicitlyBlocked = item.is_previewable === false || item.is_visualizable === false || Boolean(item.unsupported_reason) || Boolean(item.reason_code);
-    const inferredSupported = Boolean(item.url) && !isPortalPage && (format.includes("CSV") || format.includes("TSV") || format.includes("JSON") || format.includes("XML") || url.endsWith(".csv") || url.endsWith(".tsv") || url.endsWith(".json") || url.endsWith(".xml"));
+    const inferredSupported = Boolean(item.url) && !isPortalPage && (format.includes("CSV") || format.includes("TSV") || format.includes("JSON") || format.includes("XML") || format.includes("XLS") || format.includes("XLSX") || url.endsWith(".csv") || url.endsWith(".tsv") || url.endsWith(".json") || url.endsWith(".xml") || url.endsWith(".xls") || url.endsWith(".xlsx"));
     const previewable = item.is_previewable === true || (!explicitlyBlocked && inferredSupported);
     const visualizable = item.is_visualizable === true || (!explicitlyBlocked && inferredSupported);
     return {
       isPreviewable: Boolean(previewable),
       isVisualizable: Boolean(visualizable),
-      unsupportedReason: item.unsupported_reason || (isPortalPage ? "공공데이터포털 상세/목록 페이지는 직접 미리보기할 수 없습니다. 실제 파일/API 리소스를 선택하세요." : (inferredSupported ? "" : "CSV/TSV/JSON/XML 리소스만 자동 미리보기를 지원합니다. 자동 불가 시 파일을 내려받아 직접 업로드해 주세요.")),
+      unsupportedReason: item.unsupported_reason || (isPortalPage ? "공공데이터포털 상세/목록 페이지는 직접 미리보기할 수 없습니다. 실제 파일/API 리소스를 선택하세요." : (inferredSupported ? "" : "CSV/TSV/JSON/XML/XLS/XLSX 리소스만 자동 미리보기를 지원합니다. 자동 불가 시 파일을 내려받아 직접 업로드해 주세요.")),
       reasonCode: item.reason_code || (isPortalPage ? "RESOURCE_UNSUPPORTED_PORTAL_PAGE" : ""),
     };
   }
